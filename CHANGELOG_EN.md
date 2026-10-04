@@ -8,6 +8,35 @@ Important changes to this project. Format based on [Keep a Changelog](https://ke
 
 ---
 
+## [0.1.40] — 2026-10-04
+
+### Added
+
+- **Long text fields can be expanded, and the save button is pinned to the bottom of the sheet**: for the character description, note content, world-entry content and author style guide fields, the input is capped at 320 dp and scrolls inside when longer, with an arrow at the end of the label row to expand it (tap again to collapse); "cancel / save" used to be the last row of the scrolling content, and a tall description pushed it out of sight — it now sits outside the scroll area, pinned to the sheet bottom. The field's white background, border, corner radius and font size are unchanged
+
+### Fixed
+
+- **The literal line down the left of a run**: the trace no longer draws the vertical rule or the elbow lines into child rows (four styles removed with it); hierarchy is carried by the node dots and the two indent levels instead — the group header sits furthest left, everything inside shifts in one step. The line was introduced to give the round a sense of vertical threading, but the nodes and indents already say that, and a solid line competes with the text
+- **The "input / result" blocks in the trace were too loud**: they were a full block of muted background with rounded corners, and their left edge sat 5 dp further left than the whole group (the trunk sat at +13 and child text at +46, while these sat at +8) — 38 dp off the child text's indent. The background and corners are gone, the left edge aligns with the child text, and the gap between blocks goes 4 → 8; the "input" and "result" labels carry the separation
+- **Question card title hugged the card's top edge**: that header is a 44 dp row with side padding only, no vertical padding, so an 18 sp title had nothing but its line box to sit on. It gains 12 / 8 of vertical padding and the row grows 44 → 56. The write card is wrapped in 24 dp padding, so it never hugged and is untouched
+- **Skill detail would not scroll past a point and "copy as my skill" was invisible**: that panel wraps its content in one extra container with no shrink property, so the scroll area computed its height from the full content — nothing could scroll, and the buttons below were pushed outside the panel and clipped (which reads as the button having been deleted). With `flexShrink` restored the scroll works and the buttons are back in view; no other sheet has that extra layer
+- **The "currently in use" row in the style library showed a slab of green**: its white background, 1 px border and corner radius were removed along with the border in an earlier "de-border" pass, while the green background had been there since the first version — with the white gone, the green sat directly on the page. Restoring background, border and radius leaves just the green check and green text
+- **Bottom navigation icons sat on the screen's bottom edge**: after the bar was reduced to 44 dp the bottom padding was still 5 dp, leaving about 6 dp between the icon glyphs and the bottom edge. The bar height is unchanged; top padding goes 6 → 2 and bottom padding 5 → 12, lifting the icons about 7 dp
+- **Bottom sheets still had too much space below**: the shared shell's bottom padding goes 24 → 20 dp. It is one value shared by all eleven bottom sheets; the previous release merged the two stacked paddings into one, and this trims that one down a step
+- **The free-model entry that was about to expire**: OpenRouter's Space Bunny Alpha is a stealth model — the official page states it is run by a third party that chose to stay anonymous during the preview, and third-party tracking shows the free window ends at or before the model is revealed with no advance notice (median anonymity 6 days). It is replaced by `openrouter/free`, OpenRouter's own free router (200k context, tools). Qwen's qwen-turbo note now records "1M tokens per model, 90-day validity" and marks it as a limited-time allowance rather than a permanent free tier
+- **Text in the note "content" field sat at the bottom**: this multiline field was missing top alignment (the character description, world-entry content and world-info description all set it), so text did not hug the top and left a large blank above
+- **Avatar and cover downsampling never actually ran**: the step tried to overwrite the just-written original with a move that refuses to overwrite an existing target, so it always failed — and nobody awaited it, so the failure escaped the synchronous catch and the function always reported success. The resized image is now written to a new file, switched to only once it succeeds, and the original is removed afterwards; any failure keeps the original. The cover path's missing await (the avatar's was fixed earlier) is added too, so covers are now genuinely downsampled to 1080
+
+### Trade-offs
+
+- **Why the long fields cap at 320 dp**: with a sheet at 80% of the screen minus header, bottom padding and the button row, about 500 dp is usable; the four fields carry different company (the character sheet has a name field and an image row, the note sheet only a title), and 320 leaves the most room — it only clips "several thousand characters" cases, while short content stays auto-sized
+- **The four fields' background, border and corner radius are untouched**: they inherit the shared input style (white, 1 px light border, 14 radius); this release only adds a height cap and an expanded state
+- **The expand control is only on these four fields**: the rules / skills / agents editors in settings are full pages with the save button at the end of the page content, and skill detail is read-only text. Different in kind, so left alone
+- **The bottom safety gap goes from 24 to 20 dp**: that padding doubles as the gap to the screen edge and the gesture bar, and it does not add the system inset — devices without a gesture bar look the same, devices with one will feel a step tighter than at 24
+- **Why downsampling now writes a new file**: the old approach overwrote in place, so a failure halfway could delete the original without moving the new one in, losing the file for good. The new approach leaves the original untouched until the new file exists
+
+---
+
 ## [0.1.39] — 2026-10-04
 
 ### Added
