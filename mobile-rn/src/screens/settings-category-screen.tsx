@@ -1738,7 +1738,9 @@ const styles = StyleSheet.create({
   searchInput: { minHeight: 42, marginBottom: spacing.sm, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, color: colors.text, fontSize: 14 },
   // 面板本体是全宽贴屏幕两边的，内容要自己留左右边距，否则正文与按钮都顶到屏幕缘。
   // 正文与按钮之间也靠这里的 gap 分开：正文是限高滚动区，紧贴按钮会显得黏在一起。
-  skillSheetFrame: { gap: spacing.sm, paddingHorizontal: spacing.lg },
+  // flexShrink：面板有 maxHeight，中间这层必须能被压缩，里面的滚动区才拿得到高度约束。
+  // 少了它，滚动区会按内容全高铺开 —— 表现为"滑到一半就滑不动"，且底下那颗按钮被顶出可视区。
+  skillSheetFrame: { flexShrink: 1, gap: spacing.sm, paddingHorizontal: spacing.lg },
   skillSheetScroll: { flexShrink: 1 },
   skillSheetScrollContent: { paddingVertical: spacing.sm },
   skillSheetBody: { color: colors.text, fontSize: 13, lineHeight: 20 },

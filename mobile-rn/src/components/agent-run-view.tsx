@@ -22,23 +22,14 @@ import type {
 } from "@/types";
 
 /**
- * 主干上的一段：竖线 + 接到本行节点的肘线。
+ * 层级只靠缩进表达：组头贴最左，子行统一往里一档。
  *
- * 竖线拆成「上半 + 下半」两截：上半每行都有（把上一行接过来），下半只在后面还有节点时画
- * —— 一整条会拖到最后一行的底部，看着像还没结束。收口就靠这个条件落在最后一个节点的圆心。
+ * 纵向的串联感由对齐与递进承担，不另画贯穿线 —— 线一多，圈圈与文字的间距反而被压得
+ * 看不出层次。
  */
-function TraceRail({ last }: { last: boolean }) {
-  return (
-    <>
-      <View style={[styles.rail, styles.railHead]} />
-      {last ? null : <View style={[styles.rail, styles.railTail]} />}
-      <View style={styles.elbow} />
-    </>
-  );
-}
 
 /**
- * 主干上的节点，一个标记同时承担"节点"与"状态"：跑着是转圈、完成是实心或空心、失败是叉。
+ * 行首的节点，一个标记同时承担"节点"与"状态"：跑着是转圈、完成是实心或空心、失败是叉。
  *
  * 行里不再另放图标 —— 在干什么由那一行的文字说（工具名、技能名、提问），
  * 图形再说一遍就是同一件事写两遍。
@@ -100,13 +91,12 @@ function EventPayload({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 组内的一条工具 / 提问 / 技能：主干上有自己的节点，节点兼作状态。 */
-function TraceEventRow({ event, last }: { event: AgentTraceEvent; last: boolean }) {
+/** 组内的一条工具 / 提问 / 技能：行首一个节点，节点兼作状态。 */
+function TraceEventRow({ event }: { event: AgentTraceEvent }) {
   const [expanded, setExpanded] = useState(false);
   const hasPayload = Boolean(event.input || event.output);
   return (
     <View>
-      <TraceRail last={last} />
       <Pressable
         accessibilityRole={hasPayload ? "button" : undefined}
         accessibilityState={hasPayload ? { expanded } : undefined}
@@ -148,10 +138,9 @@ function TraceEventRow({ event, last }: { event: AgentTraceEvent; last: boolean 
  * 组内的一段，不是独立折叠：没有自己的箭头，展开由外层那个合集统一控制。
  * 「用时」与「字数」也不在这里写 —— 两样都由组头承担一次，段内再写一遍就是同一件事说两遍。
  */
-export function ReasoningSegment({ text, live, last }: { text: string; live?: boolean; last: boolean }) {
+export function ReasoningSegment({ text, live }: { text: string; live?: boolean }) {
   return (
     <View style={styles.reasoningSegment}>
-      <TraceRail last={last} />
       <View style={styles.reasoningSegmentHeader}>
         <View style={styles.nodeSlotChild}>
           <TraceNode status={live ? "running" : "completed"} />
@@ -234,7 +223,7 @@ export function buildTraceLines(input: {
  * 此前组头、思考行、每个工具行各带一个箭头，等于三层独立折叠：点开思考行会与
  * 外层争状态，用户看到的是"点了没反应"。收敛成一个折叠后不存在这个问题。
  *
- * 组头只留三样：主干上的节点、状态词、用时与合计字数。工具名不进组头 —— 一多就
+ * 组头只留三样：节点、状态词、用时与合计字数。工具名不进组头 —— 一多就
  * 会被挤成几个字，而展开后每行都写着它。
  *
  * 收起时机：跑着展开（过程要看得到），跑完收起（体量不能一直占屏）。失败除外 ——
@@ -325,8 +314,6 @@ export function AgentTraceView({
         onPress={() => setExpanded((value) => !value)}
         style={styles.traceHeader}
       >
-        {/* 主干从这个节点往下穿，组头只画下半截 —— 上面没有内容。 */}
-        <View style={[styles.rail, styles.railTail]} />
         <View style={styles.nodeSlotLead}>
           <TraceNode status={nodeStatus} lead />
         </View>
@@ -347,12 +334,11 @@ export function AgentTraceView({
             </View>
           ) : null}
           {visibleLines.map((line, index) => {
-            const last = index === visibleLines.length - 1;
             if (line.kind === "reasoning") {
-              return <ReasoningSegment key={`reasoning-${index}`} text={line.text ?? ""} live={line.live} last={last} />;
+              return <ReasoningSegment key={`reasoning-${index}`} text={line.text ?? ""} live={line.live} />;
             }
             const event = line.id ? eventsById.get(line.id) : undefined;
-            return event ? <TraceEventRow key={event.id} event={event} last={last} /> : null;
+            return event ? <TraceEventRow key={event.id} event={event} /> : null;
           })}
         </View>
       ) : null}
@@ -520,22 +506,17 @@ export function AgentQuestionSheet({
 }
 
 const styles = StyleSheet.create({
-  // 组根：一个组一条主干线，不画外框与底色，状态行与后续轨迹直接落在消息/实时时间线上。
+  // 组根：不画外框与底色，状态行与后续轨迹直接落在消息/实时时间线上。
   trace: { alignSelf: "flex-start", flexShrink: 1, maxWidth: "88%" },
   traceInline: { borderWidth: 0, borderRadius: 0, backgroundColor: "transparent" },
-  // 主干：一条竖线贯穿整轮，节点挂在干上。位置由两级缩进决定 —— 组头节点圆心在 +13、
-  // 子行节点圆心在 +33（往里一档 20）。上半截每行都有；下半截由 TraceRail 按"后面还有
-  // 没有节点"决定，主干因此正好收在最后一个节点的圆心，不会拖到最后一行内容的底部。
-  rail: { position: "absolute", left: 13, width: StyleSheet.hairlineWidth, backgroundColor: colors.border },
-  railHead: { top: 0, height: 21 },
-  railTail: { top: 21, bottom: 0 },
-  elbow: { position: "absolute", left: 13, top: 20.5, width: 20, height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
+  // 缩进决定层级：组头节点圆心在 +13，子行节点圆心在 +33（往里一档 20）。这个位置关系由
+  // nodeSlotLead / nodeSlotChild 的宽度加各行 paddingLeft 决定，动其中一处要一起看。
   // 组头节点（实心、稍大）与子行节点（空心、稍小）：一个标记兼作节点与状态。
   nodeSlotLead: { width: 14, alignItems: "center", justifyContent: "center" },
   nodeLead: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.primary },
   nodeSlotChild: { width: 10, alignItems: "center", justifyContent: "center" },
   nodeChild: { width: 10, height: 10, borderRadius: 5, borderWidth: 1.5, borderColor: colors.textMuted },
-  // 组头：节点圆心要落在主干上，所以左侧内边距 = 圆心 13 − 半径 7。
+  // 组头：节点圆心定在 +13，所以左侧内边距 = 圆心 13 − 半径 7。
   traceHeader: {
     minHeight: 42,
     flexDirection: "row",
@@ -578,8 +559,10 @@ const styles = StyleSheet.create({
   eventTitle: { flexShrink: 1, color: colors.text, fontSize: 13 },
   agentName: { flexShrink: 1, color: colors.textMuted, fontSize: 11 },
   eventDetail: { marginTop: 3, color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-  payloads: { gap: spacing.xs, paddingHorizontal: spacing.sm, paddingBottom: spacing.sm },
-  payload: { gap: spacing.xs, padding: spacing.xs, borderRadius: radius.sm, backgroundColor: colors.surfaceMuted },
+  // 输入 / 结果两块与子行文字同列（+46 = 子行 paddingLeft 28 + 节点 10 + 间隔 8），缩进跟着
+  // 层级走；不铺底色，两块之间靠间距与「输入 / 结果」两个标签区分。
+  payloads: { gap: spacing.sm, paddingLeft: 46, paddingBottom: spacing.sm },
+  payload: { gap: spacing.xs },
   payloadLabel: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
   payloadText: { color: colors.text, fontSize: 12, lineHeight: 18 },
   // 提问卡与写入确认卡同一套：浮在屏幕中间 + 遮罩 0.48，数值与全项目的居中卡一致。
@@ -591,12 +574,15 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   questionHeader: {
-    minHeight: 44,
+    // 标题原来顶到卡片上缘：这里原本只有一行 44 高、没有上下内边距，18 号标题几乎贴着卡边。
+    minHeight: 56,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
     paddingLeft: spacing.lg,
     paddingRight: spacing.xs,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },

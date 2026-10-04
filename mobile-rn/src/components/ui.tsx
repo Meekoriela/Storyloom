@@ -644,7 +644,9 @@ const styles = StyleSheet.create({
   topSheetAvoid: { flex: 1 },
   sheet: {
     maxHeight: "80%",
-    paddingBottom: spacing.xl,
+    // 20 不在 spacing 档位里：11 处底部弹层共用这一个数，比原来的 24 收一档，
+    // 免得末行离面板底太远；又不像 16 那样在带手势条的机型上贴住屏幕下沿。
+    paddingBottom: 20,
     borderTopLeftRadius: radius.sheet,
     borderTopRightRadius: radius.sheet,
     backgroundColor: colors.background,
