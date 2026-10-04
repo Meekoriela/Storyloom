@@ -2,10 +2,10 @@
 // 改动说明见仓库根目录 docs/上游来源与改动清单.md
 import { Ionicons } from "@expo/vector-icons";
 import { useMemo, useState } from "react";
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { Button, Field, Header, Screen } from "@/components/ui";
-import { saveModel, saveProvider, setSetting } from "@/data/repositories";
+import { Button, Field, Header, ScalePress, Screen } from "@/components/ui";
+import { listProviders, saveModel, saveProvider, setSetting } from "@/data/repositories";
 import { DEFAULT_MAX_OUTPUT_TOKENS } from "@/llm/limits";
 import { FREE_MODELS, type FreeModel } from "@/settings/free-models";
 import { guessModelCapabilities } from "@/settings/model-capabilities";
@@ -20,7 +20,7 @@ import { colors, spacing } from "@/theme";
  *
  * 清单是本地模板（`settings/free-models.ts`），不依赖任何服务端。
  */
-export function FreeModelsScreen({ onBack }: { onBack: () => void }) {
+export function FreeModelsScreen({ onBack, onSaved }: { onBack: () => void; onSaved: (message: string) => void }) {
   const [expandedPlatform, setExpandedPlatform] = useState("");
   const [pickedModelIds, setPickedModelIds] = useState<Record<string, string>>({});
   const [apiKey, setApiKey] = useState("");
@@ -43,7 +43,11 @@ export function FreeModelsScreen({ onBack }: { onBack: () => void }) {
     setSaving(true);
     setError(null);
     try {
+      // 同一个站点已经建过供应商就复用那一条：saveProvider 不传 id 时会新建一条，
+      // 在同一个平台多保存几次就会在模型页堆出好几个同名供应商。
+      const existing = (await listProviders()).find((provider) => provider.baseUrl === item.baseUrl);
       const provider = await saveProvider({
+        id: existing?.id,
         name: item.providerName,
         type: item.type,
         baseUrl: item.baseUrl,
@@ -62,7 +66,8 @@ export function FreeModelsScreen({ onBack }: { onBack: () => void }) {
       await setSetting("activeModelId", model.id);
       setApiKey("");
       setExpandedPlatform("");
-      Alert.alert("已启用", `当前模型：${item.platform} · ${item.modelLabel}`);
+      // 结果交回设置页去报：提示条挂在本页顶部，内容一多就随滚动出了屏幕，看不见。
+      onSaved(`已启用：${item.platform} · ${item.modelLabel}`);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
     } finally {
@@ -130,14 +135,14 @@ export function FreeModelsScreen({ onBack }: { onBack: () => void }) {
                       {group.models.map((item) => {
                         const active = item.id === selected.id;
                         return (
-                          <Pressable
+                          <ScalePress
                             key={item.id}
                             accessibilityLabel={`选用 ${item.modelLabel}`}
                             onPress={() => pickModel(group.platform, item.id)}
                             style={[styles.chip, active && styles.chipActive]}
                           >
                             <Text style={[styles.chipText, active && styles.chipTextActive]}>{item.modelLabel}</Text>
-                          </Pressable>
+                          </ScalePress>
                         );
                       })}
                     </View>
@@ -160,8 +165,8 @@ export function FreeModelsScreen({ onBack }: { onBack: () => void }) {
                   />
                   <Text style={styles.cardHint}>
                     {multiple
-                      ? "保存后自动设为当前模型；同一平台的条目共用这一个 Key。"
-                      : "保存后自动设为当前模型。"}
+                      ? "保存后回到模型页并自动设为当前模型；同一平台的条目共用这一个 Key。"
+                      : "保存后回到模型页并自动设为当前模型。"}
                   </Text>
                 </View>
               ) : null}

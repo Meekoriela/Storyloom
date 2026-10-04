@@ -2,13 +2,11 @@
 // 改动说明见仓库根目录 docs/上游来源与改动清单.md
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Image,
-  Alert,
   Linking,
-  Modal,
   Pressable,
   StyleSheet,
   Switch,
@@ -17,7 +15,7 @@ import {
   View,
 } from "react-native";
 
-import { Button, ErrorNotice, Field, Header, PlainScrollView, Screen, BottomSheet } from "@/components/ui";
+import { BottomSheet, Button, ConfirmDialog, ErrorNotice, Field, Header, NoticeToast, PlainScrollView, ScalePress, Screen, useNotice } from "@/components/ui";
 import { MASCOT_OPTIONS, normalizeMascotKind } from "@/settings/mascots";
 import {
   getSetting,
@@ -68,7 +66,7 @@ import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
   normalizeContextWindow,
 } from "@/agent/context-usage";
-import { getLocalModelStatus, warmUpLocalModels } from "@/search/local-models";
+import { warmUpLocalModels } from "@/search/local-models";
 import {
   ALL_OPTIONAL_RESOURCE_KINDS,
   FONT_PACK_INFO,
@@ -157,6 +155,18 @@ const APPROVAL_MODES: Array<{ id: WriteApprovalMode; label: string }> = [
 type IndexNumberKey = "chunkSize" | "chunkOverlap" | "retrievalTopK" | "rerankTopK";
 type IndexNumberDraft = Record<IndexNumberKey, string>;
 
+/**
+ * 要人拿主意的动作（删除、覆盖导入、恢复默认这类）走居中确认卡。
+ * 与写作页、助手页用的是同一个 `ConfirmDialog`，所以全项目观感一致。
+ */
+type ConfirmRequest = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  danger?: boolean;
+};
+
 /** 技能按创作环节分组：按名称关键词匹配，不改数据结构；都没命中的落到「其他」。 */
 const SKILL_GROUPS: { title: string; test: (name: string) => boolean }[] = [
   { title: "人物", test: (name) => /人物|角色|反派/.test(name) },
@@ -202,16 +212,38 @@ function draftFromSettings(settings: IndexSettings): IndexNumberDraft {
   };
 }
 
-/**
- * 「可选内容」区块的展示信息。
- * 这些内容不随安装包分发，按需下载；不装不影响写作、对话与章节管理。
- */
-const OPTIONAL_RESOURCE_DESCRIPTIONS: Array<{
+/** 「可选内容」区块里一张卡要展示的信息。 */
+type ResourceEntry = {
   id: OptionalResourceKind;
   title: string;
   sizeMb: number;
   purpose: string;
-}> = [
+};
+
+/**
+ * 「本地模型」小节的展示信息。
+ * 语义检索用的嵌入与重排模型，装在本机、按需载入。
+ */
+const LOCAL_MODEL_DESCRIPTIONS: ResourceEntry[] = [
+  {
+    id: "embedding",
+    title: "本地嵌入模型（语义检索）",
+    sizeMb: Math.round(LOCAL_MODEL_INFO.embedding.bytes / 1024 / 1024),
+    purpose: "将文本转换为向量以支持语义检索，完全在本地运行，不联网。",
+  },
+  {
+    id: "rerank",
+    title: "本地重排模型（结果精排）",
+    sizeMb: Math.round(LOCAL_MODEL_INFO.rerank.bytes / 1024 / 1024),
+    purpose: "对语义检索结果进行精排以提升准确度，非必需项。",
+  },
+];
+
+/**
+ * 「字体与技能包」小节的展示信息。
+ * 这些内容不随安装包分发，按需下载；不装不影响写作、对话与章节管理。
+ */
+const OPTIONAL_RESOURCE_DESCRIPTIONS: ResourceEntry[] = [
   {
     id: "novelist-skill",
     title: "中文小说创作技能包",
@@ -229,18 +261,6 @@ const OPTIONAL_RESOURCE_DESCRIPTIONS: Array<{
     title: "Lorn 原版文风 Skill",
     sizeMb: 1,
     purpose: "用于从导入的参考小说中蒸馏文风。该内容上游未声明开源许可，因此不随安装包分发，需手动下载。",
-  },
-  {
-    id: "embedding",
-    title: "本地嵌入模型（语义检索）",
-    sizeMb: Math.round(LOCAL_MODEL_INFO.embedding.bytes / 1024 / 1024),
-    purpose: "将文本转换为向量以支持语义检索，完全在本地运行，不联网。",
-  },
-  {
-    id: "rerank",
-    title: "本地重排模型（结果精排）",
-    sizeMb: Math.round(LOCAL_MODEL_INFO.rerank.bytes / 1024 / 1024),
-    purpose: "对语义检索结果进行精排以提升准确度，非必需项。",
   },
 ];
 
@@ -279,7 +299,8 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
   const [indexDraft, setIndexDraft] = useState<IndexNumberDraft>(() => draftFromSettings(DEFAULT_INDEX_SETTINGS));
   const [indexNeedsRebuild, setIndexNeedsRebuild] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, showNotice] = useNotice();
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [indexStats, setIndexStats] = useState({ sources: 0, chunks: 0 });
   const [indexProgress, setIndexProgress] = useState("");
   const [rules, setRules] = useState<AgentRule[]>([]);
@@ -403,12 +424,9 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     setBackupBusy(true);
     try {
       const summary = await exportBackup();
-      Alert.alert(
-        "备份完成",
-        `共 ${summary.fileCount} 个文件，已调出系统分享。请选择保存位置（网盘、文件管理器，或发送到电脑）。`,
-      );
+      showNotice(`备份完成：共 ${summary.fileCount} 个文件，已调出系统分享，请选择保存位置（网盘、文件管理器，或发送到电脑）。`);
     } catch (backupError) {
-      Alert.alert("备份失败", backupError instanceof Error ? backupError.message : String(backupError));
+      setError(backupError instanceof Error ? backupError.message : String(backupError));
     } finally {
       setBackupBusy(false);
     }
@@ -458,12 +476,12 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     try {
       const summary = await exportContentPack("storyloom-content-pack");
       if (summary.count === 0) {
-        Alert.alert("没有可导出的内容", "内容包仅导出用户自行创建的规则、技能与智能体，内置内容不参与导出。");
+        showNotice("没有可导出的内容：内容包仅导出用户自行创建的规则、技能与智能体，内置内容不参与导出。");
         return;
       }
-      Alert.alert("导出完成", `共 ${summary.count} 项，请在分享面板中选择保存位置。`);
+      showNotice(`导出完成：共 ${summary.count} 项，请在分享面板中选择保存位置。`);
     } catch (error) {
-      Alert.alert("导出失败", error instanceof Error ? error.message : String(error));
+      setError(error instanceof Error ? error.message : String(error));
     } finally {
       setContentPackBusy(false);
     }
@@ -475,7 +493,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     try {
       picked = await pickContentPack();
     } catch (error) {
-      Alert.alert("选择文件失败", error instanceof Error ? error.message : String(error));
+      setError(error instanceof Error ? error.message : String(error));
       return;
     }
     if (!picked) return;
@@ -483,39 +501,35 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     try {
       preview = await previewContentPack(picked as NonNullable<typeof picked>);
     } catch (error) {
-      Alert.alert("无法导入", error instanceof Error ? error.message : String(error));
+      setError(error instanceof Error ? error.message : String(error));
       return;
     }
     const total = preview.pack.rules.length + preview.pack.skills.length + preview.pack.agents.length;
     if (total === 0) {
-      Alert.alert("内容包为空", "该文件不含可导入的条目。");
+      showNotice("内容包为空：该文件不含可导入的条目。");
       return;
     }
-    Alert.alert(
-      "导入内容包",
-      `共 ${total} 项（规则 ${preview.pack.rules.length} · 技能 ${preview.pack.skills.length} · 智能体 ${preview.pack.agents.length}）` +
-        `${preview.conflicts > 0 ? `，其中 ${preview.conflicts} 项会覆盖本地同名条目` : ""}。确定导入吗？`,
-      [
-        { text: "取消", style: "cancel" },
-        {
-          text: "导入",
-          onPress: () => {
-            void (async () => {
-              setContentPackBusy(true);
-              try {
-                await applyContentPack(preview.pack);
-                await load();
-                Alert.alert("导入完成", `已导入 ${total} 项。`);
-              } catch (error) {
-                Alert.alert("导入失败", error instanceof Error ? error.message : String(error));
-              } finally {
-                setContentPackBusy(false);
-              }
-            })();
-          },
-        },
-      ],
-    );
+    setConfirmRequest({
+      title: "导入内容包",
+      message: `共 ${total} 项（规则 ${preview.pack.rules.length} · 技能 ${preview.pack.skills.length} · 智能体 ${preview.pack.agents.length}）`
+        + `${preview.conflicts > 0 ? `，其中 ${preview.conflicts} 项会覆盖本地同名条目` : ""}。确定导入吗？`,
+      confirmLabel: "导入",
+      danger: true,
+      onConfirm: () => {
+        void (async () => {
+          setContentPackBusy(true);
+          try {
+            await applyContentPack(preview.pack);
+            await load();
+            showNotice(`导入完成：已导入 ${total} 项。`);
+          } catch (error) {
+            setError(error instanceof Error ? error.message : String(error));
+          } finally {
+            setContentPackBusy(false);
+          }
+        })();
+      },
+    });
   };
 
   /** 选择备份文件，确认后覆盖本地数据。 */
@@ -524,42 +538,34 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     try {
       pickedFile = await pickBackupFile();
     } catch (pickError) {
-      Alert.alert("选择文件失败", pickError instanceof Error ? pickError.message : String(pickError));
+      setError(pickError instanceof Error ? pickError.message : String(pickError));
       return;
     }
     if (!pickedFile) return;
-    Alert.alert(
-      "恢复备份",
-      "将用备份覆盖当前的全部作品、章节、笔记、智能体、技能与设置。此操作不可撤销，确定继续吗？",
-      [
-        { text: "取消", style: "cancel" },
-        {
-          text: "恢复",
-          style: "destructive",
-          onPress: () => {
-            void (async () => {
-              setBackupBusy(true);
-              try {
-                const summary = await restoreBackup(pickedFile as NonNullable<typeof pickedFile>);
-                // 恢复后自动清理重复：同名供应商合并、同「供应商+模型」去重（备份不含 API Key，重添模型后易产生重复）
-                const dedupe = await dedupeProvidersAndModels().catch(() => ({ mergedProviders: 0, removedModels: 0 }));
-                const dedupeNote = dedupe.mergedProviders + dedupe.removedModels > 0
-                  ? `；已自动合并重复供应商 ${dedupe.mergedProviders} 个、清理重复模型 ${dedupe.removedModels} 个`
-                  : "";
-                Alert.alert(
-                  "恢复完成",
-                  `已恢复 ${summary.fileCount} 个文件（备份时间 ${new Date(summary.exportedAt).toLocaleString()}）${dedupeNote}。请完全关闭并重新打开应用后生效。`,
-                );
-              } catch (restoreError) {
-                Alert.alert("恢复失败", restoreError instanceof Error ? restoreError.message : String(restoreError));
-              } finally {
-                setBackupBusy(false);
-              }
-            })();
-          },
-        },
-      ],
-    );
+    setConfirmRequest({
+      title: "恢复备份",
+      message: "将用备份覆盖当前的全部作品、章节、笔记、智能体、技能与设置。此操作不可撤销，确定继续吗？",
+      confirmLabel: "恢复",
+      danger: true,
+      onConfirm: () => {
+        void (async () => {
+          setBackupBusy(true);
+          try {
+            const summary = await restoreBackup(pickedFile as NonNullable<typeof pickedFile>);
+            // 恢复后自动清理重复：同名供应商合并、同「供应商+模型」去重（备份不含 API Key，重添模型后易产生重复）
+            const dedupe = await dedupeProvidersAndModels().catch(() => ({ mergedProviders: 0, removedModels: 0 }));
+            const dedupeNote = dedupe.mergedProviders + dedupe.removedModels > 0
+              ? `；已自动合并重复供应商 ${dedupe.mergedProviders} 个、清理重复模型 ${dedupe.removedModels} 个`
+              : "";
+            showNotice(`恢复完成：已恢复 ${summary.fileCount} 个文件（备份时间 ${new Date(summary.exportedAt).toLocaleString()}）${dedupeNote}。请完全关闭并重新打开应用后生效。`);
+          } catch (restoreError) {
+            setError(restoreError instanceof Error ? restoreError.message : String(restoreError));
+          } finally {
+            setBackupBusy(false);
+          }
+        })();
+      },
+    });
   };
 
   const load = useCallback(async () => {
@@ -628,13 +634,6 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     void load();
   }, [load]));
 
-  // 轻提示：保存成功之类的短消息，2 秒后自动消失。
-  useEffect(() => {
-    if (!notice) return;
-    const timer = setTimeout(() => setNotice(null), 2000);
-    return () => clearTimeout(timer);
-  }, [notice]);
-
   /**
    * 保存一项键值设置。
    * restore 用于在保存失败时把输入框改回库里真正的值 —— 否则界面显示「已改」、
@@ -643,10 +642,9 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
   const savePreference = async (key: string, value: string, restore?: (value: string) => void) => {
     setSaving(true);
     setError(null);
-    setNotice(null);
     try {
       await setSetting(key, value);
-      setNotice("已保存");
+      showNotice("已保存");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
       const stored = await getSetting(key).catch(() => null);
@@ -658,25 +656,26 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
 
   /** 把一组键值恢复为默认值，并重新载入。 */
   const restoreDefaults = (label: string, entries: Array<{ key: string; value: string }>) => {
-    Alert.alert("恢复默认值", `将「${label}」下的设置恢复为默认值。`, [
-      { text: "取消", style: "cancel" },
-      {
-        text: "恢复",
-        onPress: async () => {
+    setConfirmRequest({
+      title: "恢复默认值",
+      message: `将「${label}」下的设置恢复为默认值。`,
+      confirmLabel: "恢复",
+      onConfirm: () => {
+        void (async () => {
           setSaving(true);
           setError(null);
           try {
             for (const entry of entries) await setSetting(entry.key, entry.value);
             await load();
-            setNotice("已恢复默认值");
+            showNotice("已恢复默认值");
           } catch (restoreError) {
             setError(restoreError instanceof Error ? restoreError.message : String(restoreError));
           } finally {
             setSaving(false);
           }
-        },
+        })();
       },
-    ]);
+    });
   };
 
   const downloadResources = async (kinds: OptionalResourceKind[] = ALL_OPTIONAL_RESOURCE_KINDS) => {
@@ -705,7 +704,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
   };
 
   /** 可选内容卡片：标题、体积、用途与下载按钮（busy 只作用在当前这一项上）。 */
-  const renderOptionalResource = (entry: { id: OptionalResourceKind; title: string; sizeMb: number; purpose: string }) => {
+  const renderOptionalResource = (entry: ResourceEntry) => {
     const item = resourceState?.items.find((candidate) => candidate.id === entry.id);
     const ready = item?.status === "ready";
     const busy = resourceBusyKind === entry.id || resourceBusyKind === "all";
@@ -739,7 +738,6 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
   const saveIndex = async (next: IndexSettings) => {
     setSaving(true);
     setError(null);
-    setNotice(null);
     try {
       const previous = indexSettings;
       await saveIndexSettings(next);
@@ -751,7 +749,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
         || previous.retrievalTopK !== stored.retrievalTopK
         || previous.rerankTopK !== stored.rerankTopK;
       if (numbersChanged) setIndexNeedsRebuild(true);
-      setNotice("已保存");
+      showNotice("已保存");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
     } finally {
@@ -814,10 +812,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
 
   /** 删除前的统一确认。规则 / 技能 / 智能体的内容删掉就找不回来了，必须拦一道。 */
   const confirmDelete = (title: string, message: string, onConfirm: () => void) => {
-    Alert.alert(title, message, [
-      { text: "取消", style: "cancel" },
-      { text: "删除", style: "destructive", onPress: onConfirm },
-    ]);
+    setConfirmRequest({ title, message, confirmLabel: "删除", danger: true, onConfirm });
   };
 
   // —— 编辑（以前只能删除后重新录入，改一个字要重输全文）——
@@ -1069,36 +1064,34 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
   };
 
   const confirmOhStoryInstall = (release: OhStoryRelease) => {
-    Alert.alert(
-      "更新 oh-story 内容包",
-      `将安装 ${release.version} 的 7 个 Skill 和 6 个移动端兼容子智能体。只导入 Markdown，不执行脚本或 Hook。`,
-      [
-        { text: "取消", style: "cancel" },
-        { text: "更新", onPress: () => void installOhStory(release) },
-      ],
-    );
+    setConfirmRequest({
+      title: "更新 oh-story 内容包",
+      message: `将安装 ${release.version} 的 7 个 Skill 和 6 个移动端兼容子智能体。只导入 Markdown，不执行脚本或 Hook。`,
+      confirmLabel: "更新",
+      onConfirm: () => void installOhStory(release),
+    });
   };
 
   const confirmOhStoryRollback = () => {
     const previous = ohStoryState.previous;
     if (!previous) return;
-    Alert.alert("回滚 oh-story 内容包", `恢复到 ${previous.version}？当前版本会保留为可回滚版本。`, [
-      { text: "取消", style: "cancel" },
-      {
-        text: "回滚",
-        onPress: () => {
-          setOhStoryBusy(true);
-          setError(null);
-          void rollbackOhStoryPackage()
-            .then(async (restored) => {
-              await reloadOhStoryCatalog();
-              setOhStoryProgress(`已恢复 ${restored.version}`);
-            })
-            .catch((rollbackError) => setError(rollbackError instanceof Error ? rollbackError.message : String(rollbackError)))
-            .finally(() => setOhStoryBusy(false));
-        },
+    setConfirmRequest({
+      title: "回滚 oh-story 内容包",
+      message: `恢复到 ${previous.version}？当前版本会保留为可回滚版本。`,
+      confirmLabel: "回滚",
+      danger: true,
+      onConfirm: () => {
+        setOhStoryBusy(true);
+        setError(null);
+        void rollbackOhStoryPackage()
+          .then(async (restored) => {
+            await reloadOhStoryCatalog();
+            setOhStoryProgress(`已恢复 ${restored.version}`);
+          })
+          .catch((rollbackError) => setError(rollbackError instanceof Error ? rollbackError.message : String(rollbackError)))
+          .finally(() => setOhStoryBusy(false));
       },
-    ]);
+    });
   };
 
   const ohStoryUpdateAvailable = Boolean(
@@ -1113,7 +1106,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     <Screen scroll>
       <Header title={TITLES[category]} onBack={onBack} />
       {error ? <View style={styles.errorWrap}><ErrorNotice message={error} onRetry={() => void load()} /></View> : null}
-      {notice ? <View style={styles.noticeWrap}><Text style={styles.noticeText}>{notice}</Text></View> : null}
+      <NoticeToast notice={notice} />
       {category === "editor" ? (
         <View style={styles.section}>
           <Text style={styles.subsectionTitle}>写作时</Text>
@@ -1231,23 +1224,24 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
           {indexProgress ? <Text style={styles.progressText}>{indexProgress}</Text> : null}
           <Button label="清除当前作品索引" variant="secondary" onPress={() => {
             if (!projectId) return;
-            Alert.alert("清除索引", "只删除索引，不删除章节、角色和世界书数据。", [
-              { text: "取消", style: "cancel" },
-              { text: "清除", style: "destructive", onPress: () => void clearProjectIndex(projectId).then(() => setIndexStats({ sources: 0, chunks: 0 })) },
-            ]);
+            setConfirmRequest({
+              title: "清除索引",
+              message: "只删除索引，不删除章节、角色和世界书数据。",
+              confirmLabel: "清除",
+              danger: true,
+              onConfirm: () => void clearProjectIndex(projectId).then(() => setIndexStats({ sources: 0, chunks: 0 })),
+            });
           }} disabled={!projectId} />
           <Button
             label="恢复默认参数"
             variant="secondary"
             onPress={() => {
-              Alert.alert(
-                "恢复默认参数",
-                `切分 ${DEFAULT_INDEX_SETTINGS.chunkSize}、重叠 ${DEFAULT_INDEX_SETTINGS.chunkOverlap}、候选 ${DEFAULT_INDEX_SETTINGS.retrievalTopK}、精选 ${DEFAULT_INDEX_SETTINGS.rerankTopK}。`,
-                [
-                  { text: "取消", style: "cancel" },
-                  { text: "恢复", onPress: () => void saveIndex({ ...DEFAULT_INDEX_SETTINGS }) },
-                ],
-              );
+              setConfirmRequest({
+                title: "恢复默认参数",
+                message: `切分 ${DEFAULT_INDEX_SETTINGS.chunkSize}、重叠 ${DEFAULT_INDEX_SETTINGS.chunkOverlap}、候选 ${DEFAULT_INDEX_SETTINGS.retrievalTopK}、精选 ${DEFAULT_INDEX_SETTINGS.rerankTopK}。`,
+                confirmLabel: "恢复",
+                onConfirm: () => void saveIndex({ ...DEFAULT_INDEX_SETTINGS }),
+              });
             }}
           />
         </View>
@@ -1258,10 +1252,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
           <Text style={styles.sectionHint}>
             语义检索所需，不随安装包分发；不装不影响写作与对话，仅影响检索增强。下载时会自动尝试国内镜像。
           </Text>
-          <SettingRow
-            label="当前加载状态"
-            value={`嵌入：${getLocalModelStatus().embeddingLoaded ? "已加载" : "未加载"} · 重排：${getLocalModelStatus().rerankLoaded ? "已加载" : "未加载"}`}
-          />
+          {LOCAL_MODEL_DESCRIPTIONS.map(renderOptionalResource)}
           <View style={styles.subsectionDivider} />
           <Text style={styles.subsectionTitle}>字体与技能包</Text>
           <Text style={styles.sectionHint}>
@@ -1315,13 +1306,13 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
             {PERMISSION_MODES
               .filter((mode) => mode.id !== "allow")
               .map((mode) => (
-                <Pressable key={mode.id} onPress={() => void setAllPermissions(mode.id)} style={styles.presetChip}>
+                <ScalePress key={mode.id} onPress={() => void setAllPermissions(mode.id)} style={styles.presetChip}>
                   <Text style={styles.presetChipText}>全部{mode.label}</Text>
-                </Pressable>
+                </ScalePress>
               ))}
-            <Pressable onPress={() => void setAllPermissions("allow")} style={styles.presetChip}>
+            <ScalePress onPress={() => void setAllPermissions("allow")} style={styles.presetChip}>
               <Text style={styles.presetChipText}>只读工具全部允许</Text>
-            </Pressable>
+            </ScalePress>
           </View>
           <TextInput
             value={toolQuery}
@@ -1353,7 +1344,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
                       </View>
                       <View style={styles.modeChoices}>
                         {(tool.readonly ? PERMISSION_MODES : PERMISSION_MODES.filter((mode) => mode.id !== "allow")).map((mode) => (
-                          <Pressable
+                          <ScalePress
                             key={mode.id}
                             onPress={() => void setPermission(tool.key, mode.id)}
                             style={[styles.modeChip, current === mode.id && (mode.id === "deny" ? styles.modeChipDeny : styles.modeChipActive)]}
@@ -1361,7 +1352,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
                             <Text style={[styles.modeChipText, current === mode.id && (mode.id === "deny" ? styles.modeChipTextDeny : styles.modeChipTextActive)]}>
                               {mode.label}
                             </Text>
-                          </Pressable>
+                          </ScalePress>
                         ))}
                       </View>
                     </View>
@@ -1388,17 +1379,17 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
                 const next = rules.map((item) => item.id === rule.id ? { ...item, enabled } : item);
                 void persistManagedState(next, saveAgentRules, setRules);
               }} trackColor={{ false: colors.border, true: colors.primary }} />
-              <Pressable accessibilityLabel="编辑规则" onPress={() => startEditRule(rule)} style={styles.iconButton}>
+              <ScalePress accessibilityLabel="编辑规则" onPress={() => startEditRule(rule)} style={styles.iconButton}>
                 <Ionicons name="create-outline" size={19} color={colors.textMuted} />
-              </Pressable>
-              <Pressable accessibilityLabel="删除规则" onPress={() => confirmDelete(
+              </ScalePress>
+              <ScalePress accessibilityLabel="删除规则" onPress={() => confirmDelete(
                 "删除规则",
                 `删除「${rule.name}」？删除后无法恢复。`,
                 () => {
                   const next = rules.filter((item) => item.id !== rule.id);
                   void persistManagedState(next, saveAgentRules, setRules);
                 },
-              )} style={styles.iconButton}><Ionicons name="trash-outline" size={19} color={colors.textMuted} /></Pressable>
+              )} style={styles.iconButton}><Ionicons name="trash-outline" size={19} color={colors.textMuted} /></ScalePress>
             </View>
           ))}
           <Text style={styles.subsectionTitle}>{editingRuleId ? "编辑规则" : "添加规则"}</Text>
@@ -1465,17 +1456,17 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
                     }} trackColor={{ false: colors.border, true: colors.primary }} />
                     {skill.source === "custom" ? (
                       <>
-                        <Pressable accessibilityLabel="编辑技能" onPress={() => startEditSkill(skill)} style={styles.iconButton}>
+                        <ScalePress accessibilityLabel="编辑技能" onPress={() => startEditSkill(skill)} style={styles.iconButton}>
                           <Ionicons name="create-outline" size={19} color={colors.textMuted} />
-                        </Pressable>
-                        <Pressable accessibilityLabel="删除技能" onPress={() => confirmDelete(
+                        </ScalePress>
+                        <ScalePress accessibilityLabel="删除技能" onPress={() => confirmDelete(
                         "删除技能",
                         `删除「${skill.name}」？删除后无法恢复。`,
                         () => {
                           const next = skills.filter((item) => item.id !== skill.id);
                           void persistManagedState(next, saveAgentSkills, setSkills);
                         },
-                      )} style={styles.iconButton}><Ionicons name="trash-outline" size={19} color={colors.textMuted} /></Pressable>
+                      )} style={styles.iconButton}><Ionicons name="trash-outline" size={19} color={colors.textMuted} /></ScalePress>
                       </>
                     ) : <View style={styles.iconButton}><Ionicons name="lock-closed-outline" size={18} color={colors.textMuted} /></View>}
                   </View>
@@ -1512,7 +1503,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
             </View>
             <View style={styles.modeChoices}>
               {APPROVAL_MODES.map((mode) => (
-                <Pressable
+                <ScalePress
                   key={mode.id}
                   onPress={() => void changeWriteApproval(mode.id)}
                   style={[styles.modeChip, writeApproval === mode.id && styles.modeChipActive]}
@@ -1520,7 +1511,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
                   <Text style={[styles.modeChipText, writeApproval === mode.id && styles.modeChipTextActive]}>
                     {mode.label}
                   </Text>
-                </Pressable>
+                </ScalePress>
               ))}
             </View>
           </View>
@@ -1547,22 +1538,22 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
                     </View>
                     <Switch value={agent.enabled} onValueChange={(enabled) => void toggleAgent(agent.id, enabled)} trackColor={{ false: colors.border, true: colors.primary }} />
                     {agent.kind === "primary" ? (
-                      <Pressable accessibilityLabel={`选择 ${agent.name} 主智能体`} disabled={!agent.enabled} onPress={() => void selectAgent(agent)} style={styles.iconButton}>
+                      <ScalePress accessibilityLabel={`选择 ${agent.name} 主智能体`} disabled={!agent.enabled} onPress={() => void selectAgent(agent)} style={styles.iconButton}>
                         <Ionicons name={activeAgentId === agent.id ? "radio-button-on" : "radio-button-off"} size={21} color={activeAgentId === agent.id ? colors.primary : colors.textMuted} />
-                      </Pressable>
+                      </ScalePress>
                     ) : <View style={styles.iconButton}><Ionicons name="git-branch-outline" size={20} color={colors.textMuted} /></View>}
                     {agent.source === "custom" ? (
                       <>
-                        <Pressable accessibilityLabel="编辑智能体" onPress={() => startEditAgent(agent)} style={styles.iconButton}>
+                        <ScalePress accessibilityLabel="编辑智能体" onPress={() => startEditAgent(agent)} style={styles.iconButton}>
                           <Ionicons name="create-outline" size={19} color={colors.textMuted} />
-                        </Pressable>
-                        <Pressable accessibilityLabel="删除智能体" onPress={() => confirmDelete(
+                        </ScalePress>
+                        <ScalePress accessibilityLabel="删除智能体" onPress={() => confirmDelete(
                         "删除智能体",
                         `删除「${agent.name}」？它的系统提示词会一起丢失，无法恢复。`,
                         () => void removeAgent(agent.id),
                       )} style={styles.iconButton}>
                         <Ionicons name="trash-outline" size={19} color={colors.textMuted} />
-                      </Pressable>
+                      </ScalePress>
                       </>
                     ) : <View style={styles.iconButton}><Ionicons name="lock-closed-outline" size={18} color={colors.textMuted} /></View>}
                   </View>
@@ -1700,7 +1691,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
         subtitle={`${detailSkill?.source === "custom" ? "自定义技能" : detailSkill?.source === "plugin" ? "Lorn 文风插件" : detailSkill?.source === "remote" ? "oh-story 更新技能" : "Storyloom 基础包"} · ${detailSkill?.instructions.length ?? 0} 字`}
         onClose={() => setDetailSkill(null)}
       >
-          <View style={skillSheetBody}>
+          <View style={styles.skillSheetFrame}>
             <PlainScrollView style={styles.skillSheetScroll} contentContainerStyle={styles.skillSheetScrollContent}>
               <Text style={styles.skillSheetBody}>{detailSkill?.instructions ?? ""}</Text>
             </PlainScrollView>
@@ -1713,18 +1704,28 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
             ) : null}
           </View>
         </BottomSheet>
+
+      {/* 先把卡收掉再执行动作：动作里可能开别的弹层，卡片留在上面会挡住新开的那一层。 */}
+      <ConfirmDialog
+        visible={Boolean(confirmRequest)}
+        title={confirmRequest?.title ?? ""}
+        message={confirmRequest?.message ?? ""}
+        confirmLabel={confirmRequest?.confirmLabel}
+        danger={confirmRequest?.danger}
+        onClose={() => setConfirmRequest(null)}
+        onConfirm={() => {
+          const request = confirmRequest;
+          setConfirmRequest(null);
+          request?.onConfirm();
+        }}
+      />
     </Screen>
   );
 }
 
-// 顶部面板的内容容器：底部留白，最后那颗按钮不贴面板下沿。
-const skillSheetBody = { paddingBottom: spacing.xl } as const;
-
 const styles = StyleSheet.create({
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
   errorWrap: { padding: spacing.lg, paddingBottom: 0 },
-  noticeWrap: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
-  noticeText: { color: colors.primary, fontSize: 13, fontWeight: "600" },
   warnText: { color: colors.accent, fontSize: 13, lineHeight: 20 },
   section: { gap: spacing.md, padding: spacing.lg },
   subsectionTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
@@ -1735,6 +1736,9 @@ const styles = StyleSheet.create({
   mascotLabel: { color: colors.text, fontSize: 12 },
   groupHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 7, paddingHorizontal: spacing.sm, marginTop: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   searchInput: { minHeight: 42, marginBottom: spacing.sm, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, color: colors.text, fontSize: 14 },
+  // 面板本体是全宽贴屏幕两边的，内容要自己留左右边距，否则正文与按钮都顶到屏幕缘。
+  // 正文与按钮之间也靠这里的 gap 分开：正文是限高滚动区，紧贴按钮会显得黏在一起。
+  skillSheetFrame: { gap: spacing.sm, paddingHorizontal: spacing.lg },
   skillSheetScroll: { flexShrink: 1 },
   skillSheetScrollContent: { paddingVertical: spacing.sm },
   skillSheetBody: { color: colors.text, fontSize: 13, lineHeight: 20 },
@@ -1748,7 +1752,9 @@ const styles = StyleSheet.create({
   permissionRow: { minHeight: 60, flexDirection: "row", alignItems: "center", gap: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   permissionText: { flex: 1, minWidth: 0 },
   permissionMode: { minWidth: 64, color: colors.primary, fontSize: 13, fontWeight: "700", textAlign: "right" },
-  manageRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.sm, marginVertical: 8, paddingVertical: spacing.sm, paddingLeft: spacing.md},
+  // 规则 / 技能 / 智能体三处共用的行：带边框与圆角的小卡片。
+  // 左侧 12dp 内边距与这套边框是一套 —— 要动边框就连内边距一起理，否则左右会不对称。
+  manageRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.sm, marginVertical: 5, paddingVertical: spacing.sm, paddingLeft: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm },
   activeRow: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
   manageText: { flex: 1, minWidth: 0, gap: spacing.xs },
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },

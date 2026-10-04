@@ -4,7 +4,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -15,7 +14,7 @@ import {
 } from "react-native";
 import { KeyboardAwareScrollView, KeyboardAvoidingView } from "react-native-keyboard-controller";
 
-import { Button, EmptyState, ErrorNotice, Field, Header, Screen } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, ErrorNotice, Field, Header, NoticeToast, ScalePress, Screen, useNotice } from "@/components/ui";
 import {
   deleteWorldInfoEntry,
   getOrCreateWorldInfo,
@@ -45,6 +44,20 @@ function triggerSummary(entry: WorldInfoEntry): string {
   return parts.join(" · ");
 }
 
+/**
+ * 要人拿主意的动作（删除、选导出格式）走居中确认卡。
+ * 三个动作时组件自动改成竖排：确认在上、取消在最下。
+ */
+type ConfirmRequest = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  danger?: boolean;
+  extraLabel?: string;
+  onExtra?: () => void;
+};
+
 export function WorldInfoScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const projectId = useAppStore((state) => state.currentProjectId);
@@ -58,6 +71,8 @@ export function WorldInfoScreen() {
   const [bookName, setBookName] = useState("");
   const [bookDescription, setBookDescription] = useState("");
   const [entryEditorVisible, setEntryEditorVisible] = useState(false);
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
+  const [notice, showNotice] = useNotice();
   const [editingEntry, setEditingEntry] = useState<WorldInfoEntry | null>(null);
   const [entryName, setEntryName] = useState("");
   const [entryContent, setEntryContent] = useState("");
@@ -153,7 +168,7 @@ export function WorldInfoScreen() {
       setEntries((current) => [...saved, ...current].sort((left, right) => left.order - right.order));
       const withTriggers = parsed.filter((entry) => entry.keywords.length || entry.secondaryKeywords.length || entry.isConstant).length;
       logImportBreadcrumb("世界书", picked.fileName, `${parsed.length} 个条目（带触发条件 ${withTriggers} 条）`);
-      Alert.alert("已导入", `${saved.length} 个条目`);
+      showNotice(`已导入 ${saved.length} 个条目`);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : String(importError));
     } finally {
@@ -190,18 +205,17 @@ export function WorldInfoScreen() {
   };
 
   const removeEntry = (entry: WorldInfoEntry) => {
-    Alert.alert("删除世界书条目", `确定删除“${entry.name}”吗？`, [
-      { text: "取消", style: "cancel" },
-      {
-        text: "删除",
-        style: "destructive",
-        onPress: () => {
-          void deleteWorldInfoEntry(entry.id)
-            .then(() => setEntries((current) => current.filter((item) => item.id !== entry.id)))
-            .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)));
-        },
+    setConfirmRequest({
+      title: "删除世界书条目",
+      message: `确定删除“${entry.name}”吗？`,
+      confirmLabel: "删除",
+      danger: true,
+      onConfirm: () => {
+        void deleteWorldInfoEntry(entry.id)
+          .then(() => setEntries((current) => current.filter((item) => item.id !== entry.id)))
+          .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)));
       },
-    ]);
+    });
   };
 
   const runExport = async (items: WorldInfoEntry[], format: LibraryExportFormat) => {
@@ -218,11 +232,14 @@ export function WorldInfoScreen() {
   };
 
   const chooseExport = (items: WorldInfoEntry[], title: string) => {
-    Alert.alert(title, "选择导出格式", [
-      { text: "取消", style: "cancel" },
-      { text: "JSON", onPress: () => void runExport(items, "json") },
-      { text: "Markdown", onPress: () => void runExport(items, "markdown") },
-    ]);
+    setConfirmRequest({
+      title,
+      message: "选择导出格式",
+      confirmLabel: "JSON",
+      onConfirm: () => void runExport(items, "json"),
+      extraLabel: "Markdown",
+      onExtra: () => void runExport(items, "markdown"),
+    });
   };
 
   if (!projectId) return <Screen><Header title="世界书" onBack={() => navigation.goBack()} /><EmptyState title="请先从书架打开一部作品" /></Screen>;
@@ -234,16 +251,17 @@ export function WorldInfoScreen() {
         onBack={() => navigation.goBack()}
         action={(
           <View style={styles.headerActions}>
-            <Pressable accessibilityLabel="导入 SillyTavern 世界书" disabled={importingSt} onPress={() => void importStWorldInfo()} style={styles.iconButton}>
+            <ScalePress accessibilityLabel="导入 SillyTavern 世界书" disabled={importingSt} onPress={() => void importStWorldInfo()} style={styles.iconButton}>
               {importingSt ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="cloud-download-outline" size={22} color={colors.primary} />}
-            </Pressable>
-            <Pressable accessibilityLabel="批量导出世界书" disabled={exporting || !entries.length} onPress={() => chooseExport(entries, "导出全部世界书条目")} style={styles.iconButton}>
+            </ScalePress>
+            <ScalePress accessibilityLabel="批量导出世界书" disabled={exporting || !entries.length} onPress={() => chooseExport(entries, "导出全部世界书条目")} style={styles.iconButton}>
               {exporting ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="download-outline" size={22} color={entries.length ? colors.primary : colors.textMuted} />}
-            </Pressable>
-            <Pressable accessibilityLabel="新建世界书条目" onPress={() => openEntryEditor()} style={styles.iconButton}><Ionicons name="add" size={26} color={colors.primary} /></Pressable>
+            </ScalePress>
+            <ScalePress accessibilityLabel="新建世界书条目" onPress={() => openEntryEditor()} style={styles.iconButton}><Ionicons name="add" size={26} color={colors.primary} /></ScalePress>
           </View>
         )}
       />
+      <NoticeToast notice={notice} />
       {error ? <View style={styles.errorWrap}><ErrorNotice message={error} onRetry={() => void load()} /></View> : null}
       {loading || !worldInfo ? <View style={styles.loading}><ActivityIndicator color={colors.primary} /></View> : (
         <KeyboardAvoidingView style={styles.flex} behavior="height" automaticOffset>
@@ -279,12 +297,12 @@ export function WorldInfoScreen() {
                   {triggerSummary(item) ? <Text numberOfLines={1} style={styles.entryTrigger}>{triggerSummary(item)}</Text> : null}
                 </View>
                 <View style={styles.rowActions}>
-                  <Pressable accessibilityLabel={`导出世界书条目 ${item.name}`} disabled={exporting} onPress={(event) => { event.stopPropagation(); chooseExport([item], `导出条目“${item.name}”`); }} hitSlop={8} style={styles.iconButton}>
+                  <ScalePress accessibilityLabel={`导出世界书条目 ${item.name}`} disabled={exporting} onPress={(event) => { event.stopPropagation(); chooseExport([item], `导出条目“${item.name}”`); }} hitSlop={8} style={styles.iconButton}>
                     <Ionicons name="download-outline" size={19} color={colors.textMuted} />
-                  </Pressable>
-                  <Pressable accessibilityLabel="删除世界书条目" onPress={(event) => { event.stopPropagation(); removeEntry(item); }} hitSlop={8} style={styles.iconButton}>
+                  </ScalePress>
+                  <ScalePress accessibilityLabel="删除世界书条目" onPress={(event) => { event.stopPropagation(); removeEntry(item); }} hitSlop={8} style={styles.iconButton}>
                     <Ionicons name="trash-outline" size={19} color={colors.textMuted} />
-                  </Pressable>
+                  </ScalePress>
                 </View>
               </Pressable>
             )}
@@ -297,9 +315,9 @@ export function WorldInfoScreen() {
           <View style={styles.modalBody}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{editingEntry ? "编辑条目" : "新建条目"}</Text>
-              <Pressable accessibilityLabel="关闭世界书编辑" onPress={() => setEntryEditorVisible(false)} style={styles.iconButton}>
+              <ScalePress accessibilityLabel="关闭世界书编辑" onPress={() => setEntryEditorVisible(false)} style={styles.iconButton}>
                 <Ionicons name="close" size={24} color={colors.textMuted} />
-              </Pressable>
+              </ScalePress>
             </View>
             <KeyboardAwareScrollView
               keyboardShouldPersistTaps="handled"
@@ -364,6 +382,27 @@ export function WorldInfoScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* 先把卡收掉再执行动作：动作里可能开别的弹层，卡片留在上面会挡住新开的那一层。 */}
+      <ConfirmDialog
+        visible={Boolean(confirmRequest)}
+        title={confirmRequest?.title ?? ""}
+        message={confirmRequest?.message ?? ""}
+        confirmLabel={confirmRequest?.confirmLabel}
+        danger={confirmRequest?.danger}
+        extraLabel={confirmRequest?.extraLabel}
+        onClose={() => setConfirmRequest(null)}
+        onConfirm={() => {
+          const request = confirmRequest;
+          setConfirmRequest(null);
+          request?.onConfirm();
+        }}
+        onExtra={() => {
+          const request = confirmRequest;
+          setConfirmRequest(null);
+          request?.onExtra?.();
+        }}
+      />
     </Screen>
   );
 }

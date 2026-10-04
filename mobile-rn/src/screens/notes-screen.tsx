@@ -4,7 +4,6 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -13,7 +12,7 @@ import {
   View,
 } from "react-native";
 
-import { Button, EmptyState, ErrorNotice, Field, Header, PlainScrollView, Screen, SheetBackdrop, BottomSheet } from "@/components/ui";
+import { BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, Field, Header, PlainScrollView, ScalePress, Screen, SheetBackdrop } from "@/components/ui";
 import { getProject, listChapters, listVolumes } from "@/data/repositories";
 import { exportNotes, type NotesExportFormat } from "@/lib/export";
 import {
@@ -44,6 +43,16 @@ const SCOPE_LABEL: Record<NoteScope, string> = {
   chapter: "章",
 };
 
+/**
+ * 删除笔记不可逆，走居中确认卡；与写作页、助手页用的是同一个组件。
+ */
+type ConfirmRequest = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+};
+
 export function NotesScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const projectId = useAppStore((state) => state.currentProjectId);
@@ -53,6 +62,7 @@ export function NotesScreen() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [editing, setEditing] = useState<Note | null>(null);
   const [creatingIn, setCreatingIn] = useState<Group | null>(null);
   const [title, setTitle] = useState("");
@@ -198,23 +208,21 @@ export function NotesScreen() {
   };
 
   const confirmDelete = (note: Note) => {
-    Alert.alert("删除笔记", `确定删除“${note.title}”？`, [
-      { text: "取消", style: "cancel" },
-      {
-        text: "删除",
-        style: "destructive",
-        onPress: () => {
-          setBusy(true);
-          void deleteNote(note.id)
-            .then(async () => {
-              closeEditor();
-              await load();
-            })
-            .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)))
-            .finally(() => setBusy(false));
-        },
+    setConfirmRequest({
+      title: "删除笔记",
+      message: `确定删除“${note.title}”？`,
+      confirmLabel: "删除",
+      onConfirm: () => {
+        setBusy(true);
+        void deleteNote(note.id)
+          .then(async () => {
+            closeEditor();
+            await load();
+          })
+          .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)))
+          .finally(() => setBusy(false));
       },
-    ]);
+    });
   };
 
   const applyMove = async (target: Group) => {
@@ -276,7 +284,7 @@ export function NotesScreen() {
         title="笔记"
         onBack={() => navigation.goBack()}
         action={
-          <Pressable
+          <ScalePress
             accessibilityLabel="导出笔记"
             disabled={exporting || !notes.length}
             onPress={chooseNotesFormat}
@@ -285,7 +293,7 @@ export function NotesScreen() {
             {exporting
               ? <ActivityIndicator size="small" color={colors.primary} />
               : <Ionicons name="download-outline" size={22} color={notes.length ? colors.primary : colors.textMuted} />}
-          </Pressable>
+          </ScalePress>
         }
       />
       {error ? <View style={styles.errorWrap}><ErrorNotice message={error} onRetry={() => void load()} /></View> : null}
@@ -343,9 +351,9 @@ export function NotesScreen() {
                     : `${SCOPE_LABEL[creatingIn?.scope ?? "project"]} · ${creatingIn?.label.trim()}`}
                 </Text>
               </View>
-              <Pressable accessibilityLabel="关闭" onPress={closeEditor} style={styles.iconButton}>
+              <ScalePress accessibilityLabel="关闭" onPress={closeEditor} style={styles.iconButton}>
                 <Ionicons name="close" size={24} color={colors.textMuted} />
-              </Pressable>
+              </ScalePress>
             </View>
             <PlainScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent} keyboardShouldPersistTaps="handled">
               <Field label="标题" value={title} onChangeText={setTitle} autoFocus={!editing} maxLength={200} />
@@ -353,9 +361,9 @@ export function NotesScreen() {
               <View style={styles.inlineActions}>
                 <Button label="保存" onPress={() => void save()} disabled={busy || !title.trim()} loading={busy} />
                 {editing ? (
-                  <Pressable accessibilityLabel="删除笔记" onPress={() => confirmDelete(editing)} style={styles.secondaryIconAction}>
+                  <ScalePress accessibilityLabel="删除笔记" onPress={() => confirmDelete(editing)} style={styles.secondaryIconAction}>
                     <Ionicons name="trash-outline" size={21} color={colors.danger} />
-                  </Pressable>
+                  </ScalePress>
                 ) : null}
               </View>
             </PlainScrollView>
@@ -371,9 +379,9 @@ export function NotesScreen() {
                 <Text style={styles.sheetTitle} numberOfLines={1}>移动“{movingNote?.title}”</Text>
                 <Text style={styles.sheetMeta}>选择新的归属层级</Text>
               </View>
-              <Pressable accessibilityLabel="关闭" onPress={() => setMovingNote(null)} style={styles.iconButton}>
+              <ScalePress accessibilityLabel="关闭" onPress={() => setMovingNote(null)} style={styles.iconButton}>
                 <Ionicons name="close" size={24} color={colors.textMuted} />
-              </Pressable>
+              </ScalePress>
             </View>
             <PlainScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
               {moveTargets.map((target) => {
@@ -426,12 +434,29 @@ export function NotesScreen() {
             </Pressable>
           </View>
         </BottomSheet>
-</Screen>
+
+      {/* 先把卡收掉再执行动作：动作里可能开别的弹层，卡片留在上面会挡住新开的那一层。 */}
+      <ConfirmDialog
+        visible={Boolean(confirmRequest)}
+        title={confirmRequest?.title ?? ""}
+        message={confirmRequest?.message ?? ""}
+        confirmLabel={confirmRequest?.confirmLabel}
+        danger
+        onClose={() => setConfirmRequest(null)}
+        onConfirm={() => {
+          const request = confirmRequest;
+          setConfirmRequest(null);
+          request?.onConfirm();
+        }}
+      />
+    </Screen>
   );
 }
 
-// 顶部面板内容容器：行自带左右内边距，这里只补行距与底部留白。
-const notesFormatBody = { paddingBottom: spacing.xl, gap: 2 } as const;
+// 导出笔记面板的内容容器：行自带左右内边距，这里只管行距。
+// 行距交给 gap，不靠每行各自的 marginBottom —— marginBottom 会给最后一行也留一份，
+// 面板底下就多出一截空白。底部留白由弹层外壳统一给。
+const notesFormatBody = { gap: 10 } as const;
 
 const styles = StyleSheet.create({
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
@@ -460,7 +485,7 @@ const styles = StyleSheet.create({
   sheetHeader: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingLeft: spacing.lg, paddingRight: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   sheetTitleWrap: { flex: 1, minWidth: 0 },
   sheetTitle: { color: colors.text, fontSize: 18, fontWeight: "700" },
-  formatRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginBottom: 8},
+  formatRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12 },
   formatRowText: { flex: 1, minWidth: 0 },
   formatRowTitle: { color: colors.text, fontSize: 14, fontWeight: "600" },
   formatRowMeta: { color: colors.textMuted, fontSize: 11, marginTop: 2 },

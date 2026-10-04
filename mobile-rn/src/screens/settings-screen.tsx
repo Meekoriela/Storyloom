@@ -5,9 +5,9 @@ import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, BackHandler, FlatList, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, BackHandler, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { Button, ErrorNotice, Field, Header, PlainScrollView, Screen, BottomSheet } from "@/components/ui";
+import { BottomSheet, Button, ConfirmDialog, ErrorNotice, Field, Header, NoticeToast, PlainScrollView, ScalePress, Screen, useNotice } from "@/components/ui";
 import {
   deleteProvider,
   getProviderApiKey,
@@ -37,6 +37,26 @@ import { colors, radius, spacing } from "@/theme";
 import type { Model, Provider, ProviderType } from "@/types";
 import { FreeModelsScreen } from "@/screens/free-models-screen";
 
+/**
+ * 请求超时的合法区间与默认值，与 `llm/client.ts` 读取这项设置时的口径一致：
+ * 超出区间的值会被静默改回默认值，所以这里先拦住，别让界面显示的和实际生效的对不上。
+ */
+const REQUEST_TIMEOUT_MIN = 10_000;
+const REQUEST_TIMEOUT_MAX = 300_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = "120000";
+
+/**
+ * 要人拿主意的动作（删除、清理这类）走居中确认卡。
+ * 与写作页、助手页用的是同一个 `ConfirmDialog`，所以三处观感一致。
+ */
+type ConfirmRequest = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  danger?: boolean;
+};
+
 const providerDefaults: Record<ProviderType, { name: string; url: string }> = {
   "openai-compatible": { name: "OpenAI Compatible", url: "https://api.openai.com/v1" },
   "google-genai": { name: "Google Gemini", url: "https://generativelanguage.googleapis.com/v1beta" },
@@ -56,14 +76,26 @@ const PROVIDER_PRESETS: Array<{
   modelHint: string;
 }> = [
   // 免费额度与免费模型的说明统一由「免费模型」分类页负责，此处只做地址预设。
-  { id: "zhipu", label: "智谱", name: "智谱 GLM", url: "https://open.bigmodel.cn/api/paas/v4", modelHint: "glm-4.7-flash" },
+  { id: "zhipu", label: "智谱", name: "智谱", url: "https://open.bigmodel.cn/api/paas/v4", modelHint: "glm-4.7-flash" },
   { id: "siliconflow", label: "硅基流动", name: "硅基流动", url: "https://api.siliconflow.cn/v1", modelHint: "Qwen/Qwen2.5-7B-Instruct" },
   { id: "openrouter", label: "OpenRouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", modelHint: "deepseek/deepseek-chat-v3.1:free" },
   { id: "dashscope", label: "通义千问", name: "阿里云百炼", url: "https://dashscope.aliyuncs.com/compatible-mode/v1", modelHint: "qwen-turbo" },
   { id: "deepseek", label: "DeepSeek", name: "DeepSeek", url: "https://api.deepseek.com/v1", modelHint: "deepseek-chat" },
-  { id: "moonshot", label: "Kimi", name: "月之暗面 Kimi", url: "https://api.moonshot.cn/v1", modelHint: "moonshot-v1-8k" },
+  { id: "moonshot", label: "Kimi", name: "月之暗面", url: "https://api.moonshot.cn/v1", modelHint: "moonshot-v1-8k" },
   { id: "custom", label: "中转站 / 自定义", name: "", url: "", modelHint: "" },
 ];
+
+/**
+ * 供应商行第二行只显示主机名。
+ *
+ * 完整地址长短差得多：`https://open.bigmodel.cn/api/paas/v4` 会被行宽截成
+ * `https://open.bigmodel.c…`，`https://flowbee.top/v1` 却能完整显示，两块并排时
+ * 看着一条断、一条全。协议头与后面的路径对用户没有信息量，认站点只需要域名。
+ */
+function hostOf(url: string): string {
+  const host = url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split("/")[0];
+  return host || url;
+}
 
 /**
  * 设置分组：14 个入口按职能分成 5 组，避免平铺一长串。
@@ -91,7 +123,7 @@ const settingsGroups: Array<{
       { id: "models", label: "模型", icon: "hardware-chip-outline" },
       { id: "free-models", label: "免费模型", icon: "gift-outline" },
       { id: "model-capabilities", label: "模型能力", icon: "speedometer-outline" },
-      { id: "conv-advanced", label: "连接", icon: "link-outline" },
+      { id: "conv-advanced", label: "请求超时", icon: "time-outline" },
     ],
   },
   {
@@ -185,15 +217,6 @@ export function SettingsScreen() {
   const [providerName, setProviderName] = useState(providerDefaults["openai-compatible"].name);
   const [baseUrl, setBaseUrl] = useState(providerDefaults["openai-compatible"].url);
   const [apiKey, setApiKey] = useState("");
-  const [selectedProviderId, setSelectedProviderId] = useState("");
-  const [modelName, setModelName] = useState("");
-  const [supportsTools, setSupportsTools] = useState(true);
-  const [supportsVision, setSupportsVision] = useState(false);
-  // 用户手动改过开关后，就不再按模型名自动覆盖，避免输入模型 ID 时把用户的判断冲掉
-  const [capabilityTouched, setCapabilityTouched] = useState(false);
-  const [modelId, setModelId] = useState("");
-  const [temperature, setTemperature] = useState("0.8");
-  const [maxTokens, setMaxTokens] = useState(String(DEFAULT_MAX_OUTPUT_TOKENS));
   const [saving, setSaving] = useState(false);
   const [savingModel, setSavingModel] = useState(false);
   const [fetchingProviderId, setFetchingProviderId] = useState<string | null>(null);
@@ -210,6 +233,10 @@ export function SettingsScreen() {
   const [modelPickerProvider, setModelPickerProvider] = useState<Provider | null>(null);
   const [remoteModels, setRemoteModels] = useState<RemoteModel[]>([]);
   const [modelFilter, setModelFilter] = useState("");
+  /** 正在落库的那一行（按远端模型 id）：行内转圈用。 */
+  const [addingModelId, setAddingModelId] = useState<string | null>(null);
+  /** 本次列表里已经加进来的远端模型 id：面板不关，用来把该行换成对勾。 */
+  const [addedModelIds, setAddedModelIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<SettingsCategory | null>(null);
   const [newAdvanced, setNewAdvanced] = useState<ProviderAdvanced>({ ...DEFAULT_PROVIDER_ADVANCED });
@@ -217,18 +244,25 @@ export function SettingsScreen() {
   const [advancedTarget, setAdvancedTarget] = useState<Provider | null>(null);
   const [advancedDraft, setAdvancedDraft] = useState<ProviderAdvanced>({ ...DEFAULT_PROVIDER_ADVANCED });
   const [advancedFlags, setAdvancedFlags] = useState<Record<string, boolean>>({});
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
+  const [notice, showNotice] = useNotice();
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [nextProviders, nextModels, selected] = await Promise.all([listProviders(), listModels(), getSetting("activeModelId")]);
+      const [nextProviders, nextModels, selected, savedTimeout] = await Promise.all([
+        listProviders(),
+        listModels(),
+        getSetting("activeModelId"),
+        getSetting("connections.requestTimeout"),
+      ]);
       setProviders(nextProviders);
       setModels(nextModels);
+      // 请求超时这一页显示的就是这个值：不读库的话每次进来都是初始的默认值，
+      // 用户在外面改过也看不出来，按钮存了什么更是无从确认。
+      setRequestTimeout(savedTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS);
       const validSelected = selected && nextModels.some((model) => model.id === selected) ? selected : null;
       setActiveModelId(validSelected);
-      setSelectedProviderId((current) => current && nextProviders.some((provider) => provider.id === current)
-        ? current
-        : nextProviders[0]?.id ?? "");
       if (selected && !validSelected) await setSetting("activeModelId", "");
       const flags = await Promise.all(nextProviders.map(async (provider) => [
         provider.id,
@@ -250,7 +284,6 @@ export function SettingsScreen() {
   ])), [providers, models]);
 
   const provNameOf = (id: string) => providers.find((p) => p.id === id)?.name ?? "?";
-  const toastSafe = (msg: string) => Alert.alert(msg);
 
   const chooseType = (type: ProviderType) => {
     setProviderType(type);
@@ -271,27 +304,6 @@ export function SettingsScreen() {
     setShowNewAdvanced(false);
   };
 
-  const activePreset = PROVIDER_PRESETS.find((item) => item.id === presetId) ?? null;
-
-  /** 按模型名推测能力；用户手动改过开关后不再自动覆盖。 */
-  const capabilityGuess = useMemo(() => guessModelCapabilities(modelId), [modelId]);
-
-  const applyCapabilityGuess = (value: string) => {
-    const guess = guessModelCapabilities(value);
-    setSupportsTools(guess.supportsTools);
-    setSupportsVision(guess.supportsVision);
-    setCapabilityTouched(false);
-  };
-
-  const handleModelIdChange = (value: string) => {
-    setModelId(value);
-    if (!capabilityTouched) {
-      const guess = guessModelCapabilities(value);
-      setSupportsTools(guess.supportsTools);
-      setSupportsVision(guess.supportsVision);
-    }
-  };
-
   const addProvider = async () => {
     if (!providerName.trim() || !baseUrl.trim() || !apiKey.trim()) return;
     setSaving(true);
@@ -304,46 +316,50 @@ export function SettingsScreen() {
       setNewAdvanced({ ...DEFAULT_PROVIDER_ADVANCED });
       setShowNewAdvanced(false);
       setApiKey("");
-      setSelectedProviderId(provider.id);
       refreshData();
+      // 保存成功要让"页面自己变了"：退回模型页 + 顶部报一次结果。
+      // 原来停在第③步一动不动，用户只能看见按钮转完恢复原样。
+      setModelsView("home");
+      setAddStep(1);
+      showNotice(`已添加供应商「${provider.name}」`);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
     } finally { setSaving(false); }
   };
 
-  const addModel = async () => {
-    if (!selectedProviderId || !modelName.trim() || !modelId.trim()) return;
-    const parsedTemperature = Number(temperature);
-    const parsedMaxTokens = Number(maxTokens);
-    if (!Number.isFinite(parsedTemperature) || parsedTemperature < 0 || parsedTemperature > 2) {
-      setError("温度必须在 0 到 2 之间");
-      return;
-    }
-    if (!Number.isInteger(parsedMaxTokens) || parsedMaxTokens < 1 || parsedMaxTokens > MAX_CONFIGURED_OUTPUT_TOKENS) {
-      setError(`最大输出 Token 数必须在 1 到 ${MAX_CONFIGURED_OUTPUT_TOKENS} 之间；1M 通常是上下文窗口，不需要填写 1000000`);
-      return;
-    }
+  /**
+   * 把拉取回来的一个远端模型存成本地模型。
+   *
+   * 供应商与模型信息都由调用方传入（来自「获取模型」列表）—— 本函数不再读表单状态，
+   * 因为那张"手动输入模型"的表单从来没有做出来过，原来的 addModel 没有任何入口调用。
+   * 温度、输出上限与能力开关用默认值，和「免费模型」页一致，之后可以在「模型能力」页改。
+   *
+   * 返回保存后的模型；失败返回 null（错误已经写进 error 交给页面显示）。
+   */
+  const addModel = async (input: { providerId: string; name: string; modelId: string }) => {
+    if (!input.providerId || !input.name.trim() || !input.modelId.trim()) return null;
     setSavingModel(true);
     setError(null);
     try {
       const model = await saveModel({
-        providerId: selectedProviderId,
-        name: modelName,
-        modelId,
-        temperature: parsedTemperature,
-        maxTokens: parsedMaxTokens,
-        supportsTools,
-        supportsVision,
+        providerId: input.providerId,
+        name: input.name,
+        modelId: input.modelId,
+        temperature: 0.8,
+        maxTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+        supportsTools: guessModelCapabilities(input.modelId).supportsTools,
+        supportsVision: guessModelCapabilities(input.modelId).supportsVision,
       });
+      // 手上一个模型都没有时，第一个加进来的直接当默认，免得加完还要再点一次。
       if (!activeModelId) {
         await setSetting("activeModelId", model.id);
         setActiveModelId(model.id);
       }
-      setModelName("");
-      setModelId("");
       refreshData();
+      return model;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
+      return null;
     } finally {
       setSavingModel(false);
     }
@@ -405,6 +421,39 @@ export function SettingsScreen() {
     }
   };
 
+  /** 显式保存超时：数值超出合法区间时先拦住 —— 存下去也会被 client 静默改回默认值。 */
+  const saveRequestTimeout = async () => {
+    const parsed = Number(requestTimeout);
+    if (!Number.isInteger(parsed) || parsed < REQUEST_TIMEOUT_MIN || parsed > REQUEST_TIMEOUT_MAX) {
+      // 越界是用户填错，不是操作失败：页面里那条红色错误条就是给它准备的。
+      setError(`请填 ${REQUEST_TIMEOUT_MIN} ~ ${REQUEST_TIMEOUT_MAX} 之间的毫秒数`);
+      return;
+    }
+    setSaving(true);
+    try {
+      await setSetting("connections.requestTimeout", String(parsed));
+      setRequestTimeout(String(parsed));
+      showNotice("已保存");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const restoreRequestTimeoutDefault = async () => {
+    setSaving(true);
+    try {
+      await setSetting("connections.requestTimeout", DEFAULT_REQUEST_TIMEOUT_MS);
+      setRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS);
+      showNotice("已恢复默认");
+    } catch (restoreError) {
+      setError(restoreError instanceof Error ? restoreError.message : String(restoreError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const selectModel = async (model: Model) => {
     try {
       await setSetting("activeModelId", model.id);
@@ -424,6 +473,9 @@ export function SettingsScreen() {
       if (!fetched.length) throw new Error("供应商没有返回可用于生成内容的模型");
       setRemoteModels(fetched);
       setModelFilter("");
+      // 列表与供应商必须成对更新：面板里的「+」会直接在这个供应商下落库，
+      // 一旦列表还留着上一次那家，就会把模型加到错的供应商下面。
+      setAddedModelIds([]);
       setModelPickerProvider(provider);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : String(fetchError));
@@ -432,13 +484,25 @@ export function SettingsScreen() {
     }
   };
 
-  const chooseRemoteModel = (model: RemoteModel) => {
-    if (!modelPickerProvider) return;
-    setSelectedProviderId(modelPickerProvider.id);
-    setModelName(model.name);
-    setModelId(model.id);
-    setModelFilter("");
-    setModelPickerProvider(null);
+  /**
+   * 勾选一个远端模型 —— 点了就真的落库，面板不关。
+   *
+   * 原来这里只把名称与 ID 塞进两个表单状态就把面板关掉，既不写库也不提示，所以点
+   * 加号"没有任何反应"。面板不关是因为中转站一次返回几十上百个模型，用户往往要连着
+   * 挑几个，关一次就得重开一次；已经加过的行会变成对勾，重复点不会重复建。
+   */
+  const chooseRemoteModel = async (model: RemoteModel) => {
+    const provider = modelPickerProvider;
+    if (!provider || addingModelId) return;
+    const alreadySaved = models.some((saved) => saved.providerId === provider.id && saved.modelId === model.id);
+    if (alreadySaved || addedModelIds.includes(model.id)) {
+      setAddedModelIds((current) => (current.includes(model.id) ? current : [...current, model.id]));
+      return;
+    }
+    setAddingModelId(model.id);
+    const saved = await addModel({ providerId: provider.id, name: model.name, modelId: model.id });
+    setAddingModelId(null);
+    if (saved) setAddedModelIds((current) => [...current, model.id]);
   };
 
   // 中转站常常返回几百个模型，按名称和 ID 做不区分大小写的子串过滤。
@@ -459,24 +523,42 @@ export function SettingsScreen() {
   // 离开设置页时收起分类：这样从其它标签页切回设置，看到的是总面板，而不是上次停留的子页。
   useFocusEffect(useCallback(() => () => setActiveCategory(null), []));
 
-  // Android 返回键：在子页时先回到总面板，而不是直接退出应用或跳到别处。
+  // Android 返回键：在子页时先回到上一级，不直接退出应用或跳走。
+  // 添加供应商向导是"模型"页里的一层：手势应当退回模型页。原来一律退到设置总面板，
+  // 等于滑一下就跳过整个模型页，和顶栏返回键（Header 的 onBack）的行为对不上。
   useEffect(() => {
     if (!activeCategory) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (activeCategory === "models" && modelsView === "addProvider") {
+        setModelsView("home");
+        return true;
+      }
       setActiveCategory(null);
       return true; // 已处理，阻止默认行为
     });
     return () => subscription.remove();
-  }, [activeCategory]);
+  }, [activeCategory, modelsView]);
 
   if (activeCategory === "free-models") {
-    return <FreeModelsScreen onBack={() => setActiveCategory(null)} />;
+    return (
+      <FreeModelsScreen
+        onBack={() => setActiveCategory(null)}
+        onSaved={(message) => {
+          // 保存成功要让"页面自己变了"：回模型页 + 顶部报一次结果，新模型就在列表里。
+          // 原来停在本页，而提示条在页面顶部、早随内容滚出屏幕，等于没提示。
+          refreshData();
+          setActiveCategory("models");
+          showNotice(message);
+        }}
+      />
+    );
   }
 
   if (activeCategory === "model-capabilities") {
     return (
       <Screen scroll>
         <Header title="模型能力" onBack={() => setActiveCategory(null)} />
+        <NoticeToast notice={notice} />
         {models.map((model) => (
           <View key={model.id} style={styles.providerBlock}>
             <Pressable onPress={() => {
@@ -512,7 +594,7 @@ export function SettingsScreen() {
                   if (!Number.isFinite(parsedTemperature) || parsedTemperature < 0 || parsedTemperature > 2) { setError("温度必须在 0 到 2 之间"); return; }
                   if (!Number.isInteger(parsedMaxTokens) || parsedMaxTokens < 1 || parsedMaxTokens > MAX_CONFIGURED_OUTPUT_TOKENS) { setError(`最大输出 Token 数必须在 1 到 ${MAX_CONFIGURED_OUTPUT_TOKENS} 之间`); return; }
                   void saveModel({ ...model, temperature: parsedTemperature, maxTokens: parsedMaxTokens, supportsTools: capDraft.supportsTools, supportsVision: capDraft.supportsVision })
-                    .then(() => { refreshData(); toastSafe("已保存「" + model.name + "」"); })
+                    .then(() => { refreshData(); showNotice("已保存「" + model.name + "」"); })
                     .catch((saveError) => setError(saveError instanceof Error ? saveError.message : String(saveError)));
                 }} loading={savingModel} />
                 </View>
@@ -529,10 +611,16 @@ export function SettingsScreen() {
   if (activeCategory === "conv-advanced") {
     return (
       <Screen scroll>
-        <Header title="连接与高级" onBack={() => setActiveCategory(null)} />
+        <Header title="请求超时" onBack={() => setActiveCategory(null)} />
+        <NoticeToast notice={notice} />
         <View style={styles.section}>
-          <Field label="模型请求超时（毫秒）" value={requestTimeout} onChangeText={setRequestTimeout} onBlur={() => void setSetting("connections.requestTimeout", requestTimeout)} keyboardType="number-pad" />
-          <Text style={styles.fieldHint}>请求超过这个时间仍未返回即判定失败。</Text>
+          <Field label="模型请求超时（毫秒）" value={requestTimeout} onChangeText={setRequestTimeout} keyboardType="number-pad" />
+          <Text style={styles.fieldHint}>请求超过这个时间仍未返回即判定失败。可填 {REQUEST_TIMEOUT_MIN} ~ {REQUEST_TIMEOUT_MAX}，默认 {DEFAULT_REQUEST_TIMEOUT_MS}（2 分钟）。</Text>
+          <View style={styles.btnrow}>
+            <Button label="保存" onPress={() => void saveRequestTimeout()} loading={saving} />
+            <Button label="恢复默认" variant="secondary" onPress={() => void restoreRequestTimeoutDefault()} disabled={saving} />
+          </View>
+          <Text style={styles.fieldHint}>各供应商的连接与高级设置（请求头、鉴权前缀、是否发送 tools 等）在「模型」页点该供应商右边的齿轮。</Text>
         </View>
 
         {error ? <View style={styles.errorWrap}><ErrorNotice message={error} onRetry={() => void load()} /></View> : null}
@@ -590,35 +678,44 @@ export function SettingsScreen() {
             <Pressable
               accessibilityLabel="清理重复"
               onPress={() => {
-                Alert.alert("清理重复", "合并同名供应商并删除重复模型（优先保留有 API Key 的）。", [
-                  { text: "取消", style: "cancel" },
-                  { text: "清理", style: "destructive", onPress: () => {
+                setConfirmRequest({
+                  title: "清理重复",
+                  message: "合并同名供应商并删除重复模型（优先保留有 API Key 的）。",
+                  confirmLabel: "清理",
+                  danger: true,
+                  onConfirm: () => {
                     void dedupeProvidersAndModels()
-                      .then((r) => { refreshData(); Alert.alert("清理完成", `合并供应商 ${r.mergedProviders} 个，删除重复模型 ${r.removedModels} 个`); })
+                      .then((r) => {
+                        refreshData();
+                        showNotice(`清理完成：合并供应商 ${r.mergedProviders} 个，删除重复模型 ${r.removedModels} 个`);
+                      })
                       .catch((cleanError) => setError(cleanError instanceof Error ? cleanError.message : String(cleanError)));
-                  } },
-                ]);
+                  },
+                });
               }}
               style={styles.fetchButton}
             >
               <Text style={{ color: colors.primary, fontSize: 13, fontWeight: "600" }}>清理重复</Text>
             </Pressable>
-            <Pressable accessibilityLabel="添加供应商" onPress={() => { setModelsView("addProvider"); setAddStep(1); }} style={styles.iconButton}>
+            <ScalePress accessibilityLabel="添加供应商" onPress={() => { setModelsView("addProvider"); setAddStep(1); }} style={styles.iconButton}>
               <Ionicons name="add" size={24} color={colors.primary} />
-            </Pressable>
+            </ScalePress>
           </View>
         }
       />
+      <NoticeToast notice={notice} />
       {error ? <View style={styles.errorWrap}><ErrorNotice message={error} onRetry={() => void load()} /></View> : null}
       {modelsView === "addProvider" ? (
         <View>
+          {/* 步骤条只做指示：显示"现在在第几步"，前进一律走每步底部的按钮。
+              原来这三格各自 onPress 跳步，跳到第③步会看到一张什么都没填的确认页。 */}
           <View style={styles.segmented}>
             {[1, 2, 3].map((step) => (
-              <Pressable key={step} onPress={() => setAddStep(step)} style={[styles.segment, addStep === step && styles.segmentActive]}>
+              <View key={step} style={[styles.segment, addStep === step && styles.segmentActive]}>
                 <Text style={[styles.segmentText, addStep === step && styles.segmentTextActive]}>
                   {step === 1 ? "① 供应商" : step === 2 ? "② 高级设置" : "③ 确认"}
                 </Text>
-              </Pressable>
+              </View>
             ))}
           </View>
           {addStep === 1 ? (
@@ -627,9 +724,9 @@ export function SettingsScreen() {
               <Text style={styles.fieldHint}>选择常用服务商可自动填入接口地址。</Text>
               <View style={styles.presetRow}>
                 {PROVIDER_PRESETS.map((preset) => (
-                  <Pressable key={preset.id} onPress={() => applyPreset(preset)} style={[styles.presetChip, presetId === preset.id && styles.presetChipActive]}>
+                  <ScalePress key={preset.id} onPress={() => applyPreset(preset)} style={[styles.presetChip, presetId === preset.id && styles.presetChipActive]}>
                     <Text style={[styles.presetChipText, presetId === preset.id && styles.presetChipTextActive]}>{preset.label}</Text>
-                  </Pressable>
+                  </ScalePress>
                 ))}
               </View>
               <Text style={styles.sectionTitle}>或者手动填</Text>
@@ -648,13 +745,19 @@ export function SettingsScreen() {
               <Text style={styles.fieldHint}>接口地址填写至 /v1 或 /v4 层级即可，对话路径由程序自动拼接。</Text>
               <Field label="API Key" value={apiKey} onChangeText={setApiKey} autoCapitalize="none" secureTextEntry />
               <Text style={styles.fieldHint}>密钥仅存于系统安全存储，不会写入数据库。</Text>
+              <View style={styles.btnrow}>
+                <Button label="下一步" onPress={() => setAddStep(2)} />
+              </View>
             </View>
           ) : null}
           {addStep === 2 ? (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>高级设置（中转站 / 自建网关，可跳过）</Text>
               <AdvancedFields value={newAdvanced} onChange={setNewAdvanced} />
-              <Button label="跳过，用默认值" variant="secondary" onPress={() => setAddStep(3)} />
+              <View style={styles.btnrow}>
+                <Button label="上一步" variant="secondary" onPress={() => setAddStep(1)} />
+                <Button label="跳过，用默认值" onPress={() => setAddStep(3)} />
+              </View>
             </View>
           ) : null}
           {addStep === 3 ? (
@@ -663,7 +766,10 @@ export function SettingsScreen() {
               <SettingRow label="显示名称" value={providerName} />
               <SettingRow label="Base URL" value={baseUrl} />
               <SettingRow label="API Key" value={apiKey ? "● 已填写" : "○ 未填写"} />
-              <Button label="保存供应商" onPress={() => void addProvider()} disabled={!providerName.trim() || !baseUrl.trim() || !apiKey.trim()} loading={saving} />
+              <View style={styles.btnrow}>
+                <Button label="上一步" variant="secondary" onPress={() => setAddStep(2)} disabled={saving} />
+                <Button label="保存供应商" onPress={() => void addProvider()} disabled={!providerName.trim() || !baseUrl.trim() || !apiKey.trim()} loading={saving} />
+              </View>
               <Text style={styles.fieldHint}>保存后回到模型页，用该供应商行的「获取模型」拉取并勾选要用的模型。</Text>
             </View>
           ) : null}
@@ -681,7 +787,7 @@ export function SettingsScreen() {
               <View style={styles.providerHeader}>
                 <View style={styles.providerInfo}>
                   <Text style={styles.providerName}>{provider.name}</Text>
-                  <Text style={styles.providerUrl} numberOfLines={1}>{provider.baseUrl}</Text>
+                  <Text style={styles.providerUrl} numberOfLines={1}>{hostOf(provider.baseUrl)}</Text>
                 </View>
                 <View style={styles.providerActions}>
                   <Pressable
@@ -695,7 +801,7 @@ export function SettingsScreen() {
                       : <Ionicons name="cloud-download-outline" size={18} color={colors.primary} />}
                     <Text style={styles.fetchButtonText}>获取模型</Text>
                   </Pressable>
-                  <Pressable
+                  <ScalePress
                     accessibilityLabel="高级设置"
                     onPress={() => void openAdvancedEditor(provider)}
                     style={styles.iconButton}
@@ -705,13 +811,16 @@ export function SettingsScreen() {
                       size={18}
                       color={advancedFlags[provider.id] ? colors.primary : colors.textMuted}
                     />
-                  </Pressable>
-                  <Pressable accessibilityLabel="删除供应商" onPress={() => {
-                    Alert.alert("删除供应商", `删除 ${provider.name} 及其全部模型？`, [
-                      { text: "取消", style: "cancel" },
-                      { text: "删除", style: "destructive", onPress: () => void removeProvider(provider) },
-                    ]);
-                  }} style={styles.iconButton}><Ionicons name="trash-outline" size={20} color={colors.danger} /></Pressable>
+                  </ScalePress>
+                  <ScalePress accessibilityLabel="删除供应商" onPress={() => {
+                    setConfirmRequest({
+                      title: "删除供应商",
+                      message: `删除 ${provider.name} 及其全部模型？`,
+                      confirmLabel: "删除",
+                      danger: true,
+                      onConfirm: () => void removeProvider(provider),
+                    });
+                  }} style={styles.iconButton}><Ionicons name="trash-outline" size={20} color={colors.danger} /></ScalePress>
                 </View>
               </View>
               {(modelsByProvider.get(provider.id) ?? []).map((model) => (
@@ -724,13 +833,17 @@ export function SettingsScreen() {
                   <Ionicons name={activeModelId === model.id ? "radio-button-on" : "radio-button-off"} size={20} color={activeModelId === model.id ? colors.primary : colors.textMuted} />
                   <View style={styles.modelText}>
                     <Text style={styles.modelName}>{model.name}</Text>
-                    <Text style={styles.modelId}>长按设置该模型的对话参数</Text>
+                    <Text style={styles.modelId}>长按设置上下文参数</Text>
                   </View>
                 </Pressable>
               ))}
-              <Pressable accessibilityLabel={`为${provider.name}添加模型`} onPress={() => { setSelectedProviderId(provider.id); setModelPickerProvider(provider); }} style={styles.addModelRow}>
-                <Ionicons name="add-circle-outline" size={18} color={colors.primary} />
-                <Text style={{ color: colors.primary, fontSize: 12.5, fontWeight: "600" }}>添加模型（获取列表勾选或手动输入）</Text>
+              {/* 这一行与「获取模型」是同一个动作：面板里的列表必须属于这个供应商，
+                  否则勾选会把模型加到上一家下面。所以这里直接重新拉一次再打开面板。 */}
+              <Pressable accessibilityLabel={`为${provider.name}添加模型`} onPress={() => { void fetchRemoteModels(provider); }} style={styles.addModelRow}>
+                {fetchingProviderId === provider.id
+                  ? <ActivityIndicator size="small" color={colors.primary} />
+                  : <Ionicons name="add-circle-outline" size={18} color={colors.primary} />}
+                <Text style={{ color: colors.primary, fontSize: 12.5, fontWeight: "600" }}>添加模型（拉取该供应商的模型列表后勾选）</Text>
               </Pressable>
             </View>
           ))}
@@ -743,6 +856,7 @@ export function SettingsScreen() {
         subtitle={convSheetModel ? convSheetModel.name : ""}
         onClose={() => setConvSheetModel(null)}
       >
+          <View style={styles.convSheetBody}>
             <View style={styles.segmented}>
               <Pressable onPress={() => setConvScope("model")} style={[styles.segment, convScope === "model" && styles.segmentActive]}>
                 <Text style={[styles.segmentText, convScope === "model" && styles.segmentTextActive]}>仅此模型</Text>
@@ -756,14 +870,14 @@ export function SettingsScreen() {
             {convScope === "global" ? (
               <ToggleRow label="压缩系统提示词（全局）" value={convCompress} onChange={(value) => { setConvCompress(value); void setSetting("context.compressSystemPrompts", value ? "true" : "false"); }} />
             ) : (
-              <Text style={[styles.fieldHint, { marginTop: spacing.sm, marginBottom: spacing.xs }]}>压缩系统提示词为全局设置；切到「全局默认」可修改。</Text>
+              <Text style={styles.fieldHint}>压缩系统提示词为全局设置；切到「全局默认」可修改。</Text>
             )}
             <View style={styles.btnrow}>
               {convScope === "model" ? (
                 <Button label="恢复默认" variant="secondary" onPress={() => {
                   if (!convSheetModel) return;
                   void setSetting(`context.override.${convSheetModel.id}`, "").then(() => {
-                    toastSafe("已恢复跟随全局默认");
+                    showNotice("已恢复跟随全局默认");
                     setConvSheetModel(null);
                   });
                 }} />
@@ -778,7 +892,7 @@ export function SettingsScreen() {
                     windowTokens: Number.isInteger(parsedWindow) && parsedWindow > 0 ? parsedWindow : null,
                   };
                   void setSetting(`context.override.${convSheetModel.id}`, JSON.stringify(override)).then(() => {
-                    toastSafe("已保存（仅此模型生效）");
+                    showNotice("已保存（仅此模型生效）");
                     setConvSheetModel(null);
                   });
                 } else {
@@ -786,12 +900,13 @@ export function SettingsScreen() {
                     setSetting("context.historyLimit", String(Number.isInteger(parsedHistory) && parsedHistory >= 4 ? parsedHistory : 30)),
                     setSetting(CONTEXT_WINDOW_KEY, String(Number.isInteger(parsedWindow) && parsedWindow > 0 ? parsedWindow : 32768)),
                   ]).then(() => {
-                    toastSafe("已保存（全局默认）");
+                    showNotice("已保存（全局默认）");
                     setConvSheetModel(null);
                   });
                 }
               }} />
             </View>
+          </View>
         </BottomSheet>
       <BottomSheet
         visible={modelPickerProvider !== null}
@@ -821,15 +936,33 @@ export function SettingsScreen() {
                   {remoteModels.length ? `没有匹配“${modelFilter.trim()}”的模型` : "还没有获取到模型列表"}
                 </Text>
               )}
-              renderItem={({ item }) => (
-                <Pressable onPress={() => chooseRemoteModel(item)} style={styles.remoteModelRow}>
-                  <View style={styles.modelText}>
-                    <Text style={styles.modelName}>{item.name}</Text>
-                    <Text style={styles.modelId}>{item.id}</Text>
-                  </View>
-                  <Ionicons name="add-circle-outline" size={22} color={colors.primary} />
-                </Pressable>
-              )}
+              renderItem={({ item }) => {
+                // 已经在库里的（含上一次进来加的）也要显示对勾，否则重复点了会以为没成。
+                const added = addedModelIds.includes(item.id)
+                  || models.some((saved) => saved.providerId === modelPickerProvider?.id && saved.modelId === item.id);
+                const busy = addingModelId === item.id;
+                return (
+                  <Pressable
+                    accessibilityLabel={`添加模型 ${item.name}`}
+                    accessibilityState={{ disabled: added || busy }}
+                    onPress={() => void chooseRemoteModel(item)}
+                    disabled={added || busy}
+                    style={styles.remoteModelRow}
+                  >
+                    <View style={styles.modelText}>
+                      <Text style={styles.modelName}>{item.name}</Text>
+                      <Text style={styles.modelId}>{item.id}</Text>
+                    </View>
+                    {busy ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : added ? (
+                      <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
+                    ) : (
+                      <Ionicons name="add-circle-outline" size={22} color={colors.primary} />
+                    )}
+                  </Pressable>
+                );
+              }}
             />
         </BottomSheet>
 
@@ -848,6 +981,21 @@ export function SettingsScreen() {
               <Button label="保存高级设置" onPress={() => void saveAdvancedEditor()} />
             </PlainScrollView>
         </BottomSheet>
+
+      {/* 先把卡收掉再执行动作：动作里可能开别的弹层，卡片留在上面会挡住新开的那一层。 */}
+      <ConfirmDialog
+        visible={Boolean(confirmRequest)}
+        title={confirmRequest?.title ?? ""}
+        message={confirmRequest?.message ?? ""}
+        confirmLabel={confirmRequest?.confirmLabel}
+        danger={confirmRequest?.danger}
+        onClose={() => setConfirmRequest(null)}
+        onConfirm={() => {
+          const request = confirmRequest;
+          setConfirmRequest(null);
+          request?.onConfirm();
+        }}
+      />
     </Screen>
   );
 }
@@ -865,6 +1013,9 @@ const styles = StyleSheet.create({
   section: { padding: spacing.lg, gap: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   errorWrap: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
   sectionTitle: { color: colors.text, fontSize: 18, fontWeight: "700" },
+  // 对话设置面板的内容框：面板本体是全宽贴屏幕两边的，内容要自己留左右边距。
+  // 元素之间统一由 gap 管，避免散装 children 各贴各的。
+  convSheetBody: { gap: spacing.md, paddingHorizontal: spacing.lg, paddingTop: spacing.md },
   segmented: { flexDirection: "row", padding: 3, borderRadius: radius.md, backgroundColor: colors.surfaceMuted },
   segment: { flex: 1, minHeight: 38, alignItems: "center", justifyContent: "center", borderRadius: radius.sm },
   segmentActive: { backgroundColor: colors.surface },
@@ -881,7 +1032,7 @@ const styles = StyleSheet.create({
   // 弹层里的列表：高度上限由面板给，超出在这里滚。
   panelList: { flexShrink: 1 },
   advancedSheetBody: { flexShrink: 1, paddingHorizontal: spacing.lg, paddingTop: spacing.md },
-  advancedSheetContent: { gap: spacing.md, paddingBottom: spacing.xl },
+  advancedSheetContent: { gap: spacing.md },
   toggleRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, paddingHorizontal: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md },
   toggleRowOn: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
   toggleText: { flex: 1, color: colors.text, fontSize: 13, lineHeight: 20 },

@@ -69,16 +69,19 @@ function MainTabs() {
           headerShown: false,
           tabBarActiveTintColor: colors.primary,
           tabBarInactiveTintColor: colors.textMuted,
+          // 只留图标：文字标签去掉后整栏能矮一截。title 仍留着 —— 它同时是无障碍标签，
+          // 屏幕阅读器靠它念出「书架 / 写作 / 助手 / 设置」。
+          tabBarShowLabel: false,
           tabBarStyle: {
             backgroundColor: colors.background,
             borderTopColor: colors.border,
-            height: 58 + insets.bottom,
+            // 44 是项目里按钮的最小可点高度，整栏不低于它，按起来不会比原来更难按。
+            height: 44 + insets.bottom,
             paddingBottom: Math.max(insets.bottom, 5),
-            paddingTop: 4,
+            paddingTop: 6,
           },
           tabBarHideOnKeyboard: true,
           tabBarButton: (props) => <TabPressButton {...props} />,
-          tabBarLabelStyle: { fontSize: 11 },
           tabBarIcon: ({ color, size }) => {
             const icons: Record<keyof RootTabParamList, keyof typeof Ionicons.glyphMap> = {
               Projects: "library-outline",

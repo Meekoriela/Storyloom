@@ -4,7 +4,6 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -13,7 +12,7 @@ import {
   View,
 } from "react-native";
 
-import { Button, EmptyState, ErrorNotice, Field, Header, PlainScrollView, Screen, BottomSheet } from "@/components/ui";
+import { BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, Field, Header, PlainScrollView, ScalePress, Screen } from "@/components/ui";
 import {
   createStyleProfileVersion,
   deleteStyleProfile,
@@ -51,6 +50,16 @@ function formatName(source: StyleSource): string {
   return source.format === "markdown" ? "Markdown" : "TXT";
 }
 
+/**
+ * 删除是不可逆的，走居中确认卡；与写作页、助手页用的是同一个组件。
+ */
+type ConfirmRequest = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+};
+
 export function StyleLibraryScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const projectId = useAppStore((state) => state.currentProjectId);
@@ -63,6 +72,7 @@ export function StyleLibraryScreen() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [distillationError, setDistillationError] = useState<string | null>(null);
   const [distillationProgress, setDistillationProgress] = useState("");
   const [distillationStep, setDistillationStep] = useState<{ stage: string; completed: number; total: number } | null>(null);
@@ -266,28 +276,22 @@ export function StyleLibraryScreen() {
 
   const confirmDeleteSource = () => {
     if (!selectedSource) return;
-    Alert.alert(
-      "删除参考书",
-      "确定删除《" + selectedSource.title + "》及其全部参考文风版本？原文件只保存在本机。",
-      [
-        { text: "取消", style: "cancel" },
-        {
-          text: "删除",
-          style: "destructive",
-          onPress: () => {
-            setBusy(true);
-            void deleteStyleSource(selectedSource.id)
-              .then(async () => {
-                setSelectedSource(null);
-                setSourceProfiles([]);
-                await load();
-              })
-              .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)))
-              .finally(() => setBusy(false));
-          },
-        },
-      ],
-    );
+    setConfirmRequest({
+      title: "删除参考书",
+      message: "确定删除《" + selectedSource.title + "》及其全部参考文风版本？原文件只保存在本机。",
+      confirmLabel: "删除",
+      onConfirm: () => {
+        setBusy(true);
+        void deleteStyleSource(selectedSource.id)
+          .then(async () => {
+            setSelectedSource(null);
+            setSourceProfiles([]);
+            await load();
+          })
+          .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)))
+          .finally(() => setBusy(false));
+      },
+    });
   };
 
   const saveAuthor = async () => {
@@ -314,24 +318,22 @@ export function StyleLibraryScreen() {
   };
 
   const removeProfile = (profile: StyleProfile) => {
-    Alert.alert("删除文风版本", "确定删除“" + profile.name + " V" + profile.version + "”？", [
-      { text: "取消", style: "cancel" },
-      {
-        text: "删除",
-        style: "destructive",
-        onPress: () => {
-          setBusy(true);
-          void deleteStyleProfile(profile.id)
-            .then(async () => {
-              if (activeProfile?.id === profile.id) setActiveProfile(null);
-              setSelectedProfile(null);
-              await load();
-            })
-            .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)))
-            .finally(() => setBusy(false));
-        },
+    setConfirmRequest({
+      title: "删除文风版本",
+      message: "确定删除“" + profile.name + " V" + profile.version + "”？",
+      confirmLabel: "删除",
+      onConfirm: () => {
+        setBusy(true);
+        void deleteStyleProfile(profile.id)
+          .then(async () => {
+            if (activeProfile?.id === profile.id) setActiveProfile(null);
+            setSelectedProfile(null);
+            await load();
+          })
+          .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)))
+          .finally(() => setBusy(false));
       },
-    ]);
+    });
   };
 
   if (loading) {
@@ -344,9 +346,9 @@ export function StyleLibraryScreen() {
         title="文风书库"
         onBack={() => navigation.goBack()}
         action={(
-          <Pressable accessibilityLabel="导入参考小说" disabled={busy} onPress={() => void importBook()} style={styles.iconButton}>
+          <ScalePress accessibilityLabel="导入参考小说" disabled={busy} onPress={() => void importBook()} style={styles.iconButton}>
             {busy ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="add" size={26} color={colors.primary} />}
-          </Pressable>
+          </ScalePress>
         )}
       />
       {error ? <View style={styles.errorWrap}><ErrorNotice message={error} onRetry={() => void load()} /></View> : null}
@@ -443,12 +445,12 @@ export function StyleLibraryScreen() {
                   {coverageStarted || distillationCheckpoint ? (
                     <Button label="重新开始" variant="secondary" onPress={() => void distill(true)} disabled={busy} />
                   ) : null}
-                  <Pressable accessibilityLabel="重命名参考书" onPress={() => setEditingSource(true)} style={styles.secondaryIconAction}>
+                  <ScalePress accessibilityLabel="重命名参考书" onPress={() => setEditingSource(true)} style={styles.secondaryIconAction}>
                     <Ionicons name="create-outline" size={21} color={colors.text} />
-                  </Pressable>
-                  <Pressable accessibilityLabel="删除参考书" onPress={confirmDeleteSource} style={styles.secondaryIconAction}>
+                  </ScalePress>
+                  <ScalePress accessibilityLabel="删除参考书" onPress={confirmDeleteSource} style={styles.secondaryIconAction}>
                     <Ionicons name="trash-outline" size={21} color={colors.danger} />
-                  </Pressable>
+                  </ScalePress>
                 </View>
               )}
               {distillationError ? <ErrorNotice message={distillationError} onRetry={() => void distill()} /> : null}
@@ -536,12 +538,27 @@ export function StyleLibraryScreen() {
                   onPress={() => void activate(selectedProfile)}
                   disabled={busy || !projectId || activeProfile?.id === selectedProfile?.id}
                 />
-                <Pressable accessibilityLabel="删除文风版本" onPress={() => selectedProfile && removeProfile(selectedProfile)} style={styles.secondaryIconAction}>
+                <ScalePress accessibilityLabel="删除文风版本" onPress={() => selectedProfile && removeProfile(selectedProfile)} style={styles.secondaryIconAction}>
                   <Ionicons name="trash-outline" size={21} color={colors.danger} />
-                </Pressable>
+                </ScalePress>
               </View>
             </PlainScrollView>
         </BottomSheet>
+
+      {/* 先把卡收掉再执行动作：动作里可能开别的弹层，卡片留在上面会挡住新开的那一层。 */}
+      <ConfirmDialog
+        visible={Boolean(confirmRequest)}
+        title={confirmRequest?.title ?? ""}
+        message={confirmRequest?.message ?? ""}
+        confirmLabel={confirmRequest?.confirmLabel}
+        danger
+        onClose={() => setConfirmRequest(null)}
+        onConfirm={() => {
+          const request = confirmRequest;
+          setConfirmRequest(null);
+          request?.onConfirm();
+        }}
+      />
     </Screen>
   );
 }
@@ -624,8 +641,8 @@ const styles = StyleSheet.create({
   useButtonTextActive: { color: colors.textMuted },
   // 父层只有 maxHeight，ScrollView 默认不收缩会把超出部分顶出可视区且滚不动，必须允许它收缩。
   sheetScroll: { flexShrink: 1 },
-  sheetContent: { gap: spacing.md, padding: spacing.lg, paddingBottom: spacing.xxl },
-  profileContent: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.xxl },
+  sheetContent: { gap: spacing.md, paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
+  profileContent: { gap: spacing.lg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
   inlineActions: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: spacing.sm },
   secondaryIconAction: { width: 46, height: 46, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.surface },
   helperText: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },

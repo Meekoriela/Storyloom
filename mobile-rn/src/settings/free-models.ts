@@ -38,7 +38,7 @@ export const FREE_MODELS: FreeModel[] = [
     modelLabel: "GLM-4.7-Flash",
     note: "该模型当前免费开放，注册后在控制台生成 API Key。",
     type: "openai-compatible",
-    providerName: "智谱 GLM",
+    providerName: "智谱",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
     modelId: "glm-4.7-flash",
     signupUrl: "https://open.bigmodel.cn/",

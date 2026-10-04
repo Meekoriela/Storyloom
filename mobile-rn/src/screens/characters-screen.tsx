@@ -6,7 +6,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Image,
   Modal,
@@ -18,7 +17,7 @@ import {
 } from "react-native";
 import { KeyboardAwareScrollView, KeyboardAvoidingView } from "react-native-keyboard-controller";
 
-import { Button, EmptyState, ErrorNotice, Field, Header, Screen } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, ErrorNotice, Field, Header, NoticeToast, ScalePress, Screen, useNotice } from "@/components/ui";
 import { downsampleToFile } from "@/lib/media-downsample";
 import { deleteCharacter, getProject, listCharacters, saveCharacter } from "@/data/repositories";
 import { exportCharacters, type LibraryExportFormat } from "@/lib/export";
@@ -28,6 +27,20 @@ import type { RootStackParamList } from "@/navigation/types";
 import { useAppStore } from "@/store/app-store";
 import { colors, radius, spacing } from "@/theme";
 import type { Character, Project } from "@/types";
+
+/**
+ * 要人拿主意的动作（删除、选导出格式）走居中确认卡。
+ * 三个动作时组件自动改成竖排：确认在上、取消在最下。
+ */
+type ConfirmRequest = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  danger?: boolean;
+  extraLabel?: string;
+  onExtra?: () => void;
+};
 
 export function CharactersScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -46,6 +59,8 @@ export function CharactersScreen() {
   const [description, setDescription] = useState("");
   const [isFavorited, setIsFavorited] = useState(false);
   const [imagePath, setImagePath] = useState("");
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
+  const [notice, showNotice] = useNotice();
 
   const load = useCallback(async () => {
     if (!projectId) {
@@ -93,7 +108,7 @@ export function CharactersScreen() {
       const saved = await saveCharacter({ projectId, name: card.name, description: card.description });
       setCharacters((current) => [saved, ...current]);
       logImportBreadcrumb("角色卡", picked.fileName, card.name);
-      Alert.alert("已导入", card.name);
+      showNotice(`已导入角色「${card.name}」`);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : String(importError));
     } finally {
@@ -112,17 +127,23 @@ export function CharactersScreen() {
       });
       if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
+      // 扩展名只留字母数字：相册文件名可能带空格、中文或干脆没有扩展名，
+      // 直接拼进路径会让原生建出非法文件名。净化后为空则退回 jpg。
+      const extension = (asset.fileName?.split(".").pop() ?? "").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
       const directory = new Directory(Paths.document, "character-images");
       directory.create({ intermediates: true, idempotent: true });
-      const extension = (asset.fileName?.split(".").pop() ?? "jpg").toLowerCase();
+      // 每次都用新文件名：图片组件按 URI 缓存，同名会导致「换了图界面没反应」。
       const target = new File(directory, `${createId()}.${extension}`);
-      new File(asset.uri).copy(target);
+      // copy 是异步的，必须等它落盘。不等的话下面拿到的是一个还不存在的路径，
+      // 预览与保存都会失败，而失败会被下面的降采样空 catch 吃掉、界面上毫无提示。
+      await new File(asset.uri).copy(target);
+      // 降采样只是省内存，失败不影响图片本身，不作提示。
       try {
         await downsampleToFile(target.uri, 512);
       } catch {}
       setImagePath(target.uri);
     } catch (pickError) {
-      Alert.alert("无法读取图片", pickError instanceof Error ? pickError.message : String(pickError));
+      setError(pickError instanceof Error ? pickError.message : String(pickError));
     }
   };
 
@@ -152,18 +173,17 @@ export function CharactersScreen() {
   };
 
   const remove = (character: Character) => {
-    Alert.alert("删除角色", `确定删除“${character.name}”吗？`, [
-      { text: "取消", style: "cancel" },
-      {
-        text: "删除",
-        style: "destructive",
-        onPress: () => {
-          void deleteCharacter(character.id)
-            .then(() => setCharacters((current) => current.filter((item) => item.id !== character.id)))
-            .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)));
-        },
+    setConfirmRequest({
+      title: "删除角色",
+      message: `确定删除“${character.name}”吗？`,
+      confirmLabel: "删除",
+      danger: true,
+      onConfirm: () => {
+        void deleteCharacter(character.id)
+          .then(() => setCharacters((current) => current.filter((item) => item.id !== character.id)))
+          .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)));
       },
-    ]);
+    });
   };
 
   const runExport = async (items: Character[], format: LibraryExportFormat): Promise<void> => {
@@ -180,11 +200,14 @@ export function CharactersScreen() {
   };
 
   const chooseExport = (items: Character[], title: string) => {
-    Alert.alert(title, "选择导出格式", [
-      { text: "取消", style: "cancel" },
-      { text: "JSON", onPress: () => void runExport(items, "json") },
-      { text: "Markdown", onPress: () => void runExport(items, "markdown") },
-    ]);
+    setConfirmRequest({
+      title,
+      message: "选择导出格式",
+      confirmLabel: "JSON",
+      onConfirm: () => void runExport(items, "json"),
+      extraLabel: "Markdown",
+      onExtra: () => void runExport(items, "markdown"),
+    });
   };
 
   const exportAll = async (format: LibraryExportFormat): Promise<void> => {
@@ -199,11 +222,14 @@ export function CharactersScreen() {
 
   const chooseBulkExport = () => {
     if (!projectId || !project || exporting) return;
-    Alert.alert("导出全部角色", "选择导出格式", [
-      { text: "取消", style: "cancel" },
-      { text: "JSON", onPress: () => void exportAll("json") },
-      { text: "Markdown", onPress: () => void exportAll("markdown") },
-    ]);
+    setConfirmRequest({
+      title: "导出全部角色",
+      message: "选择导出格式",
+      confirmLabel: "JSON",
+      onConfirm: () => void exportAll("json"),
+      extraLabel: "Markdown",
+      onExtra: () => void exportAll("markdown"),
+    });
   };
 
   if (!projectId) return <Screen><Header title="角色" onBack={() => navigation.goBack()} /><EmptyState title="请先从书架打开一部作品" /></Screen>;
@@ -215,19 +241,20 @@ export function CharactersScreen() {
         onBack={() => navigation.goBack()}
         action={(
           <View style={styles.headerActions}>
-            <Pressable accessibilityLabel="导入 SillyTavern 角色卡" disabled={importingSt} onPress={() => void importStCharacter()} style={styles.iconButton}>
+            <ScalePress accessibilityLabel="导入 SillyTavern 角色卡" disabled={importingSt} onPress={() => void importStCharacter()} style={styles.iconButton}>
               {importingSt ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="cloud-download-outline" size={22} color={colors.primary} />}
-            </Pressable>
-            <Pressable accessibilityLabel="批量导出角色" disabled={exporting} onPress={chooseBulkExport} style={styles.iconButton}>
+            </ScalePress>
+            <ScalePress accessibilityLabel="批量导出角色" disabled={exporting} onPress={chooseBulkExport} style={styles.iconButton}>
               {exporting ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="download-outline" size={22} color={colors.primary} />}
-            </Pressable>
-            <Pressable accessibilityLabel="新建角色" onPress={() => openEditor()} style={styles.iconButton}><Ionicons name="add" size={26} color={colors.primary} /></Pressable>
+            </ScalePress>
+            <ScalePress accessibilityLabel="新建角色" onPress={() => openEditor()} style={styles.iconButton}><Ionicons name="add" size={26} color={colors.primary} /></ScalePress>
           </View>
         )}
       />
       <View style={styles.searchWrap}>
         <Field label="搜索角色" value={query} onChangeText={setQuery} placeholder="按名称或设定搜索" returnKeyType="search" />
       </View>
+      <NoticeToast notice={notice} />
       {error ? <View style={styles.errorWrap}><ErrorNotice message={error} onRetry={() => void load()} /></View> : null}
       <FlatList
         data={characters}
@@ -251,12 +278,12 @@ export function CharactersScreen() {
               <Text numberOfLines={3} style={styles.description}>{item.description || "暂无角色设定"}</Text>
             </View>
             <View style={styles.rowActions}>
-              <Pressable accessibilityLabel={`导出角色 ${item.name}`} disabled={exporting} onPress={(event) => { event.stopPropagation(); chooseExport([item], `导出角色“${item.name}”`); }} hitSlop={8} style={styles.iconButton}>
+              <ScalePress accessibilityLabel={`导出角色 ${item.name}`} disabled={exporting} onPress={(event) => { event.stopPropagation(); chooseExport([item], `导出角色“${item.name}”`); }} hitSlop={8} style={styles.iconButton}>
                 <Ionicons name="download-outline" size={19} color={colors.textMuted} />
-              </Pressable>
-              <Pressable accessibilityLabel="删除角色" onPress={(event) => { event.stopPropagation(); remove(item); }} hitSlop={8} style={styles.iconButton}>
+              </ScalePress>
+              <ScalePress accessibilityLabel="删除角色" onPress={(event) => { event.stopPropagation(); remove(item); }} hitSlop={8} style={styles.iconButton}>
                 <Ionicons name="trash-outline" size={19} color={colors.textMuted} />
-              </Pressable>
+              </ScalePress>
             </View>
           </Pressable>
         )}
@@ -267,9 +294,9 @@ export function CharactersScreen() {
           <View style={styles.modalBody}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{editing ? "编辑角色" : "新建角色"}</Text>
-              <Pressable accessibilityLabel="关闭角色编辑" onPress={() => setEditorVisible(false)} style={styles.iconButton}>
+              <ScalePress accessibilityLabel="关闭角色编辑" onPress={() => setEditorVisible(false)} style={styles.iconButton}>
                 <Ionicons name="close" size={24} color={colors.textMuted} />
-              </Pressable>
+              </ScalePress>
             </View>
             <KeyboardAwareScrollView
               keyboardShouldPersistTaps="handled"
@@ -281,6 +308,8 @@ export function CharactersScreen() {
               contentContainerStyle={styles.form}
             >
               <Field label="角色名称" value={name} onChangeText={setName} autoFocus={!editing} />
+              {/* 错误提示必须放在弹窗内：页面级的那条在弹窗底下，选图失败时看不见。 */}
+              {error ? <Text style={styles.editorError}>{error}</Text> : null}
               <View style={styles.imageRow}>
                 {imagePath ? (
                   <Image source={{ uri: imagePath }} style={styles.imagePreview} resizeMethod="resize" />
@@ -307,6 +336,27 @@ export function CharactersScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* 先把卡收掉再执行动作：动作里可能开别的弹层，卡片留在上面会挡住新开的那一层。 */}
+      <ConfirmDialog
+        visible={Boolean(confirmRequest)}
+        title={confirmRequest?.title ?? ""}
+        message={confirmRequest?.message ?? ""}
+        confirmLabel={confirmRequest?.confirmLabel}
+        danger={confirmRequest?.danger}
+        extraLabel={confirmRequest?.extraLabel}
+        onClose={() => setConfirmRequest(null)}
+        onConfirm={() => {
+          const request = confirmRequest;
+          setConfirmRequest(null);
+          request?.onConfirm();
+        }}
+        onExtra={() => {
+          const request = confirmRequest;
+          setConfirmRequest(null);
+          request?.onExtra?.();
+        }}
+      />
     </Screen>
   );
 }
@@ -316,6 +366,7 @@ const styles = StyleSheet.create({
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   searchWrap: { padding: spacing.lg, paddingBottom: spacing.sm },
   errorWrap: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
+  editorError: { color: colors.danger, fontSize: 13, lineHeight: 19 },
   list: { paddingVertical: spacing.sm },
   emptyList: { flexGrow: 1 },
   row: { minHeight: 98, flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
