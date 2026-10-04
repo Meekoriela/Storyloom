@@ -7,13 +7,13 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Dimensions, FlatList, Image, ImageBackground, Modal, Pressable, StyleSheet, TextInput, Text, View } from "react-native";
+import { ActivityIndicator, Dimensions, FlatList, Image, ImageBackground, Modal, Pressable, StyleSheet, TextInput, Text, View } from "react-native";
 import { appendBreadcrumb } from "@/lib/crash-log";
 import { importProjectFromFile } from "@/lib/doc-import";
 import { downsampleToFile } from "@/lib/media-downsample";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 
-import { Button, EmptyState, ErrorNotice, Field, Header, PlainScrollView, Screen, BottomSheet , TopSheet} from "@/components/ui";
+import { BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, Field, Header, PlainScrollView, ScalePress, Screen, TopSheet } from "@/components/ui";
 import { createCategory, createProject, deleteCategory, deleteProject, getProjectStats, getProjectStatsMap, getSetting, listCategories, listProjects, renameCategory, setProjectCategory, setSetting, updateProjectCover, updateProjectInfo, type ProjectStats } from "@/data/repositories";
 import type { RootStackParamList, RootTabParamList } from "@/navigation/types";
 import { useAppStore } from "@/store/app-store";
@@ -35,29 +35,34 @@ const SHELF_VIEW_ICONS: Record<ShelfViewMode, keyof typeof Ionicons.glyphMap> = 
   spine: "library-outline",
 };
 
+/**
+ * 要人拿主意的动作（删除分类、删除作品这类）走居中确认卡。
+ * 与写作页、助手页用的是同一个 `ConfirmDialog`，所以全项目观感一致。
+ */
+type ConfirmRequest = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  danger?: boolean;
+};
+
 // 书脊视图的基准尺寸：宽度按字数缩放（spineThickness），高度同理（spineHeight）。
 const SPINE_BASE_WIDTH = 48;
 const SPINE_BASE_HEIGHT = 180;
-/** 书脊一排几本、书与书之间的基准间距（歪出去的书会把那一侧占掉一部分）。 */
-const SPINE_PER_ROW = 5;
+/** 书脊单本的宽度上限按此本数均分：一行实际站几本由书的宽度决定，不写死。 */
+const SPINE_MAX_PER_ROW = 5;
+/** 书与书之间的基准间距（歪出去的书会把那一侧占掉一部分）。 */
 const SPINE_GAP = 4;
 
 /**
- * 层板贴图里「板上棱高光线」距贴图底边的比例（该图 3322×383，最亮行在 y=246）。
+ * 书底距贴图底边的比例（该图 3322×383；板上棱高光线在 y=246，恰好距底边 0.36）。
  *
- * 书要坐在板上，落脚点就是这条线：书底抬到这个高度，板的前立面才完整露在书的下方；
- * 抬不到位书就压在板前，看上去与板平行。
+ * 贴图整高铺在行底部，书底抬到这条比例上：越往上，书越往书架深处坐、背后露出的背墙
+ * 越多；越往下，书越靠板的前沿。0.52 让书底落在棱线上方一点，板的前立面与一小段背墙
+ * 都露在书的下方。
  */
-const PLANK_TOP_RATIO = 0.36;
-
-/**
- * 书脚被板上沿压住的量（dp）。
- *
- * 书底仍落在板上棱线上，但板画在书之上、上沿再往下压住书脚这么多 —— 书的底边因此
- * 看不见，像插在板的槽里。只把书抬到板上、板却画在书身后的话，书底与板上沿会重合
- * 在同一条线上，看着就是一张卡贴在板前、与板平行。
- */
-const PLANK_COVER = 3;
+const PLANK_FOOT_RATIO = 0.52;
 
 const PLANK_IMAGE = require("../../assets/images/shelf-plank.png");
 
@@ -70,6 +75,7 @@ export function ProjectsScreen() {
   const [viewMode, setViewMode] = useState<ShelfViewMode>("grid");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   /** 操作面板对应的作品；null 表示面板未打开 */
   const [menuProject, setMenuProject] = useState<Project | null>(null);
@@ -166,20 +172,19 @@ export function ProjectsScreen() {
     setCategories(await listCategories());
   };
   const removeCategory = (category: Category) => {
-    Alert.alert("删除分类", `删除「${category.name}」？名下作品将回到未分类。`, [
-      { text: "取消", style: "cancel" },
-      {
-        text: "删除",
-        style: "destructive",
-        onPress: () => {
-          void (async () => {
-            await deleteCategory(category.id);
-            setCategories(await listCategories());
-            await loadProjects();
-          })();
-        },
+    setConfirmRequest({
+      title: "删除分类",
+      message: `删除「${category.name}」？名下作品将回到未分类。`,
+      confirmLabel: "删除",
+      danger: true,
+      onConfirm: () => {
+        void (async () => {
+          await deleteCategory(category.id);
+          setCategories(await listCategories());
+          await loadProjects();
+        })();
       },
-    ]);
+    });
   };
   const assignToCategory = async (categoryId: string | null) => {
     if (!assignTarget) return;
@@ -210,15 +215,17 @@ export function ProjectsScreen() {
         ? !project.categoryId || !categories.some((category) => category.id === project.categoryId)
         : project.categoryId === selectedCategoryId);
     const items: Array<{ kind: "row"; row: Project[] } | { kind: "project"; project: Project }> = [];
-    // 网格每行 4 本；书脊书更宽，每行 5 本。两者都是"一行一条层板"。
+    // 网格每行 4 本（等宽铺满）；书脊按实际宽度装箱，一行塞到放不下才换行。两者都是"一行一条层板"。
     if (viewMode === "list") {
       for (const project of visible) items.push({ kind: "project", project });
       return items;
     }
-    const perRow = viewMode === "grid" ? 4 : SPINE_PER_ROW;
-    for (const row of chunkProjects(visible, perRow)) items.push({ kind: "row", row });
+    const rows = viewMode === "grid"
+      ? chunkProjects(visible, 4)
+      : packSpineRows(visible, shelfInnerWidth, (project) => stats[project.id]?.characters ?? 0);
+    for (const row of rows) items.push({ kind: "row", row });
     return items;
-  }, [projects, sortedProjects, categories, selectedCategoryId, viewMode]);
+  }, [projects, sortedProjects, categories, selectedCategoryId, viewMode, shelfInnerWidth, stats]);
 
   const submit = async () => {
     if (!title.trim()) return;
@@ -260,7 +267,7 @@ export function ProjectsScreen() {
       )));
       setInfoProject(null);
     } catch (infoError) {
-      Alert.alert("保存失败", infoError instanceof Error ? infoError.message : String(infoError));
+      setError(infoError instanceof Error ? infoError.message : String(infoError));
     } finally {
       setInfoSaving(false);
     }
@@ -277,7 +284,7 @@ export function ProjectsScreen() {
       await loadProjects();
       openProject(project);
     } catch (importError) {
-      Alert.alert("导入失败", importError instanceof Error ? importError.message : String(importError));
+      setError(importError instanceof Error ? importError.message : String(importError));
     } finally {
       setImporting(false);
     }
@@ -285,10 +292,86 @@ export function ProjectsScreen() {
 
   const openProjectMenu = (project: Project) => setMenuProject(project);
 
-/** 把书架列表按每行 4 本分块，行下面渲染整条书架板。 */
+/** 网格：把作品按每行 4 本分块，行下面渲染整条书架板。 */
 function chunkProjects(list: Project[], size: number): Project[][] {
   const rows: Project[][] = [];
   for (let index = 0; index < list.length; index += size) rows.push(list.slice(index, index + size));
+  return rows;
+}
+
+/** 书脊单本的宽度上限：按行宽均分若干份，再厚的书也占不满整行。 */
+function spineMaxWidthFor(shelfInnerWidth: number): number {
+  return Math.max(
+    SPINE_BASE_WIDTH,
+    Math.floor((shelfInnerWidth - SPINE_GAP * (SPINE_MAX_PER_ROW - 1)) / SPINE_MAX_PER_ROW),
+  );
+}
+
+/** 书脊单本的实际宽度：字数定厚薄，再压到上限以内。装箱与渲染共用，两处宽度必须一致。 */
+function spineBookWidth(characters: number, title: string, maxWidth: number): number {
+  return Math.min(maxWidth, Math.round(SPINE_BASE_WIDTH * spineThickness(characters, title)));
+}
+
+/**
+ * 一排书脊里第 index 本的落位：宽、高、倾角、左侧间距。
+ *
+ * 书脊和它正下方的标签各渲染一遍，两处要用同一份结果 —— 一排书宽窄不一，标签若按行内
+ * 均分就会跟书错开。间距里要扣掉相邻两本歪出去占掉的那部分：书顶偏过来多少，缝就窄多少。
+ */
+function spineLayoutAt(
+  row: Project[],
+  index: number,
+  charactersOf: (project: Project) => number,
+  maxWidth: number,
+): { width: number; height: number; lean: number; marginLeft: number } {
+  const project = row[index];
+  const characters = charactersOf(project);
+  const lean = spineLean(project.title);
+  const height = Math.round(SPINE_BASE_HEIGHT * spineHeight(characters, project.title));
+  const previous = index > 0 ? row[index - 1] : null;
+  const previousLean = previous ? spineLean(previous.title) : 0;
+  const previousShift = previous
+    ? spineLeanShift(previousLean, Math.round(SPINE_BASE_HEIGHT * spineHeight(charactersOf(previous), previous.title)))
+    : 0;
+  const used = (previousLean > 0 ? previousShift : 0) + (lean < 0 ? spineLeanShift(lean, height) : 0);
+  return {
+    width: spineBookWidth(characters, project.title, maxWidth),
+    height,
+    lean,
+    marginLeft: index === 0 ? 0 : Math.max(1, Math.round(SPINE_GAP - used)),
+  };
+}
+
+/**
+ * 书脊一行站几本，由书的实际宽度决定，不写死本数。
+ *
+ * 每本宽度按字数算（与渲染同一套），从行左往右塞、塞不下就换行：书薄的一行能站十本，
+ * 书厚的一行只站得下六七本。行宽要减掉 `spineShelfRow` 的左右各 6；间距一律按
+ * `SPINE_GAP` 的上界计入（渲染时歪书的间距只会更小），这样装箱结果不会超出行宽。
+ */
+function packSpineRows(
+  list: Project[],
+  shelfInnerWidth: number,
+  charactersOf: (project: Project) => number,
+): Project[][] {
+  const rowWidth = Math.max(0, shelfInnerWidth - 12);
+  const maxWidth = spineMaxWidthFor(shelfInnerWidth);
+  const rows: Project[][] = [];
+  let current: Project[] = [];
+  let used = 0;
+  for (const project of list) {
+    const width = spineBookWidth(charactersOf(project), project.title, maxWidth);
+    const step = current.length ? SPINE_GAP + width : width;
+    if (current.length && used + step > rowWidth) {
+      rows.push(current);
+      current = [project];
+      used = width;
+    } else {
+      current.push(project);
+      used += step;
+    }
+  }
+  if (current.length) rows.push(current);
   return rows;
 }
 
@@ -390,7 +473,7 @@ function coverColor(title: string): string {
       if (result.canceled || !result.assets[0]) return;
       picked = result.assets[0];
     } catch (pickError) {
-      Alert.alert("无法打开相册", pickError instanceof Error ? pickError.message : String(pickError));
+      setError(pickError instanceof Error ? pickError.message : String(pickError));
       return;
     }
 
@@ -406,14 +489,14 @@ function coverColor(title: string): string {
       } catch {}
       void appendBreadcrumb(`封面已保存（降采样）`);
     } catch (copyError) {
-      Alert.alert("封面保存失败", `图片已选中，但写入本地目录失败：${copyError instanceof Error ? copyError.message : String(copyError)}`);
+      setError(`图片已选中，但写入本地目录失败：${copyError instanceof Error ? copyError.message : String(copyError)}`);
       return;
     }
 
     try {
       await updateProjectCover(project.id, target.uri);
     } catch (dbError) {
-      Alert.alert("封面保存失败", `图片已复制，但写入作品记录失败：${dbError instanceof Error ? dbError.message : String(dbError)}`);
+      setError(`图片已复制，但写入作品记录失败：${dbError instanceof Error ? dbError.message : String(dbError)}`);
       return;
     }
 
@@ -440,26 +523,25 @@ function coverColor(title: string): string {
       await updateProjectCover(project.id, null);
       setProjects((current) => current.map((item) => (item.id === project.id ? { ...item, coverPath: null } : item)));
     } catch (removeError) {
-      Alert.alert("无法移除封面", removeError instanceof Error ? removeError.message : String(removeError));
+      setError(removeError instanceof Error ? removeError.message : String(removeError));
     }
   };
 
   const confirmDelete = (project: Project) => {
-    Alert.alert("删除作品", `确定删除《${project.title}》及全部本地数据？`, [
-      { text: "取消", style: "cancel" },
-      {
-        text: "删除",
-        style: "destructive",
-        onPress: () => {
-          void deleteProject(project.id)
-            .then(() => {
-              setProjects((current) => current.filter((item) => item.id !== project.id));
-              if (currentProjectId === project.id) setCurrentProject(null);
-            })
-            .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)));
-        },
+    setConfirmRequest({
+      title: "删除作品",
+      message: `确定删除《${project.title}》及全部本地数据？`,
+      confirmLabel: "删除",
+      danger: true,
+      onConfirm: () => {
+        void deleteProject(project.id)
+          .then(() => {
+            setProjects((current) => current.filter((item) => item.id !== project.id));
+            if (currentProjectId === project.id) setCurrentProject(null);
+          })
+          .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : String(deleteError)));
       },
-    ]);
+    });
   };
 
   return (
@@ -467,22 +549,22 @@ function coverColor(title: string): string {
       <Header
         title={
           categories.length ? (
-            <Pressable accessibilityLabel="选择分组" onPress={() => setCategoryPanelVisible((value) => !value)} style={styles.shelfTitleButton}>
+            <ScalePress accessibilityLabel="选择分组" onPress={() => setCategoryPanelVisible((value) => !value)} style={styles.shelfTitleButton}>
               <Text style={styles.shelfTitleText}>{currentCategoryName}</Text>
               <Ionicons name={categoryPanelVisible ? "chevron-up" : "chevron-down"} size={16} color={colors.text} />
-            </Pressable>
+            </ScalePress>
           ) : (
             "全部"
           )
         }
         action={
           <View style={styles.headerActions}>
-            <Pressable accessibilityLabel="新建作品" onPress={() => setShowCreate(true)} style={styles.iconButton}>
+            <ScalePress accessibilityLabel="新建作品" onPress={() => setShowCreate(true)} style={styles.iconButton}>
               <Ionicons name="add" size={26} color={colors.primary} />
-            </Pressable>
-            <Pressable accessibilityLabel="书架菜单" onPress={() => setShelfMenuVisible(true)} style={styles.iconButton}>
+            </ScalePress>
+            <ScalePress accessibilityLabel="书架菜单" onPress={() => setShelfMenuVisible(true)} style={styles.iconButton}>
               <Ionicons name="ellipsis-horizontal" size={22} color={colors.primary} />
-            </Pressable>
+            </ScalePress>
           </View>
         }
       />
@@ -490,18 +572,18 @@ function coverColor(title: string): string {
         <>
           <Pressable accessibilityLabel="关闭分组面板" onPress={() => setCategoryPanelVisible(false)} style={styles.shelfMenuBackdrop} />
           <View style={styles.categoryPanel}>
-            <Pressable onPress={() => selectShelfCategory(null)} style={[styles.shelfChip, !selectedCategoryId && styles.shelfChipActive]}>
+            <ScalePress onPress={() => selectShelfCategory(null)} style={[styles.shelfChip, !selectedCategoryId && styles.shelfChipActive]}>
               <Text style={[styles.shelfChipText, !selectedCategoryId && styles.shelfChipTextActive]}>全部</Text>
-            </Pressable>
+            </ScalePress>
             {categories.map((category) => (
-              <Pressable key={category.id} onPress={() => selectShelfCategory(category.id)} style={[styles.shelfChip, selectedCategoryId === category.id && styles.shelfChipActive]}>
+              <ScalePress key={category.id} onPress={() => selectShelfCategory(category.id)} style={[styles.shelfChip, selectedCategoryId === category.id && styles.shelfChipActive]}>
                 <Text style={[styles.shelfChipText, selectedCategoryId === category.id && styles.shelfChipTextActive]}>{category.name}</Text>
-              </Pressable>
+              </ScalePress>
             ))}
             {hasUncategorized ? (
-              <Pressable onPress={() => selectShelfCategory("uncategorized")} style={[styles.shelfChip, selectedCategoryId === "uncategorized" && styles.shelfChipActive]}>
+              <ScalePress onPress={() => selectShelfCategory("uncategorized")} style={[styles.shelfChip, selectedCategoryId === "uncategorized" && styles.shelfChipActive]}>
                 <Text style={[styles.shelfChipText, selectedCategoryId === "uncategorized" && styles.shelfChipTextActive]}>未分类</Text>
-              </Pressable>
+              </ScalePress>
             ) : null}
           </View>
         </>
@@ -614,18 +696,18 @@ function coverColor(title: string): string {
             </View>
             {categories.length ? (
               <PlainScrollView horizontal keyboardShouldPersistTaps="handled" style={styles.shelfChipsRow} contentContainerStyle={styles.shelfChipsContent}>
-                <Pressable onPress={() => selectShelfCategory(null)} style={({ pressed }) => [styles.shelfChip, !selectedCategoryId && styles.shelfChipActive]}>
+                <ScalePress onPress={() => selectShelfCategory(null)} style={({ pressed }) => [styles.shelfChip, !selectedCategoryId && styles.shelfChipActive]}>
                   <Text style={[styles.shelfChipText, !selectedCategoryId && styles.shelfChipTextActive]}>全部</Text>
-                </Pressable>
+                </ScalePress>
                 {categories.map((category) => (
-                  <Pressable key={category.id} onPress={() => selectShelfCategory(category.id)} style={({ pressed }) => [styles.shelfChip, selectedCategoryId === category.id && styles.shelfChipActive]}>
+                  <ScalePress key={category.id} onPress={() => selectShelfCategory(category.id)} style={({ pressed }) => [styles.shelfChip, selectedCategoryId === category.id && styles.shelfChipActive]}>
                     <Text style={[styles.shelfChipText, selectedCategoryId === category.id && styles.shelfChipTextActive]}>{category.name}</Text>
-                  </Pressable>
+                  </ScalePress>
                 ))}
                 {hasUncategorized ? (
-                  <Pressable onPress={() => selectShelfCategory("uncategorized")} style={({ pressed }) => [styles.shelfChip, selectedCategoryId === "uncategorized" && styles.shelfChipActive]}>
+                  <ScalePress onPress={() => selectShelfCategory("uncategorized")} style={({ pressed }) => [styles.shelfChip, selectedCategoryId === "uncategorized" && styles.shelfChipActive]}>
                     <Text style={[styles.shelfChipText, selectedCategoryId === "uncategorized" && styles.shelfChipTextActive]}>未分类</Text>
-                  </Pressable>
+                  </ScalePress>
                 ) : null}
               </PlainScrollView>
             ) : null}
@@ -638,12 +720,12 @@ function coverColor(title: string): string {
             const row = item.kind === "row" ? item.row : [];
             // 书架 = 一行的背景层（照书架类应用的画法）：层板贴图铺在行底部、全宽贯通，
             // 书格底坐在板上棱线；与本书数无关——1 本书板也贯通。
-            // 4 格 + 3 个间隙，两侧只留 6：原先两侧留 28 加 12，格子被压窄显得书小。
+            // 4 格 + 3 个间隙，宽度里要扣掉行内左右各 14（shelfRow）与 6（shelfBooks）；
+            // 少扣一项，最后一格就会被屏幕右缘切掉。
             const cellGap = 6;
-            const cellWidth = Math.max(60, Math.floor((shelfInnerWidth - 12 - 3 * cellGap) / 4));
+            const cellWidth = Math.max(60, Math.floor((shelfInnerWidth - 28 - 12 - 3 * cellGap) / 4));
             const plankStrip = Math.round(shelfInnerWidth / (3322 / 383));
-            // 书底坐在板的上棱线上，板的前立面完整留在书下；抬不到位书就压在板前。
-            const plankBelow = Math.round(plankStrip * PLANK_TOP_RATIO);
+            const plankBelow = Math.round(plankStrip * PLANK_FOOT_RATIO);
             const rowHeight = Math.round((cellWidth * 4) / 3) + plankBelow;
             return (
               <View
@@ -654,7 +736,13 @@ function coverColor(title: string): string {
                 }}
               >
                 <View style={{ height: rowHeight, justifyContent: "flex-end" }}>
-                <View style={[styles.shelfBooks, { paddingBottom: Math.max(0, plankBelow - PLANK_COVER), gap: cellGap }]}>
+                {/* 层板整高铺在行底部、画在书之前：书坐在板上，板的前立面与一小段背墙留在书的下方。 */}
+                <ImageBackground
+                  source={PLANK_IMAGE}
+                  resizeMode="stretch"
+                  style={{ position: "absolute", left: -60, right: -60, bottom: 0, height: plankStrip }}
+                />
+                <View style={[styles.shelfBooks, { paddingBottom: plankBelow, gap: cellGap }]}>
                   {row.map((project) => {
                     const lines = bookTitleLines(project.title);
                     return (
@@ -674,14 +762,6 @@ function coverColor(title: string): string {
                       </Pressable>
                     );
                   })}
-                </View>
-                {/* 板画在书之后（盖在书上），只取贴图下段（上棱线 + 前立面）：板上沿压住书脚。 */}
-                <View style={{ position: "absolute", left: -60, right: -60, bottom: 0, height: plankBelow, overflow: "hidden" }}>
-                  <ImageBackground
-                    source={PLANK_IMAGE}
-                    resizeMode="stretch"
-                    style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: plankStrip }}
-                  />
                 </View>
                 </View>
                 <View style={[styles.shelfLabels, { gap: cellGap }]}>
@@ -703,10 +783,10 @@ function coverColor(title: string): string {
           if (viewMode === "spine") {
             const row = item.kind === "row" ? item.row : [];
             const spinePlankHeight = Math.max(10, Math.round(shelfInnerWidth / (3322 / 383)));
-            // 书脊与网格同一套落脚点：书底落在板的上棱线上，板的前立面留在书下。
-            const spinePlankTop = Math.round(spinePlankHeight * PLANK_TOP_RATIO);
-            // 一排书的总宽不越过行宽：字数多的书吃到这个上限为止。
-            const spineMaxWidth = Math.floor((shelfInnerWidth - SPINE_GAP * (SPINE_PER_ROW - 1)) / SPINE_PER_ROW);
+            const spinePlankTop = Math.round(spinePlankHeight * PLANK_FOOT_RATIO);
+            // 单本宽度上限：与装箱用同一个函数，两处宽度必须一致。
+            const spineMaxWidth = spineMaxWidthFor(shelfInnerWidth);
+            const spineCharacters = (item: Project) => stats[item.id]?.characters ?? 0;
             return (
               <View
                 style={styles.spineShelfRow}
@@ -715,20 +795,16 @@ function coverColor(title: string): string {
                   if (Math.abs(width - shelfInnerWidth) > 1) setShelfInnerWidth(width);
                 }}
               >
-                <View style={{ height: SPINE_BASE_HEIGHT + spinePlankTop, justifyContent: "flex-end", paddingBottom: Math.max(0, spinePlankTop - PLANK_COVER) }}>
+                <View style={{ height: SPINE_BASE_HEIGHT + spinePlankTop, justifyContent: "flex-end", paddingBottom: spinePlankTop }}>
+                  {/* 与网格同一套：层板整高铺在行底部、画在书之前。层板按行宽折算，写死 14 会在宽行上被拉扁。 */}
+                  <ImageBackground
+                    source={PLANK_IMAGE}
+                    resizeMode="stretch"
+                    style={{ position: "absolute", left: -60, right: -60, bottom: 0, height: spinePlankHeight }}
+                  />
                   <View style={styles.spineBooks}>
                     {row.map((project, index) => {
-                      const characters = stats[project.id]?.characters ?? 0;
-                      const lean = spineLean(project.title);
-                      const height = Math.round(SPINE_BASE_HEIGHT * spineHeight(characters, project.title));
-                      // 书顶向哪边偏，那一侧的间距就被占掉多少：歪出去的书正好搭在邻书上。
-                      const previous = index > 0 ? row[index - 1] : null;
-                      const previousLean = previous ? spineLean(previous.title) : 0;
-                      const previousShift = previous
-                        ? spineLeanShift(previousLean, Math.round(SPINE_BASE_HEIGHT * spineHeight(stats[previous.id]?.characters ?? 0, previous.title)))
-                        : 0;
-                      const used = (previousLean > 0 ? previousShift : 0) + (lean < 0 ? spineLeanShift(lean, height) : 0);
-                      const marginLeft = index === 0 ? 0 : Math.max(1, Math.round(SPINE_GAP - used));
+                      const { width, height, lean, marginLeft } = spineLayoutAt(row, index, spineCharacters, spineMaxWidth);
                       return (
                         <Pressable
                           key={project.id}
@@ -739,7 +815,7 @@ function coverColor(title: string): string {
                             styles.spineBook,
                             {
                               marginLeft,
-                              width: Math.min(spineMaxWidth, Math.round(SPINE_BASE_WIDTH * spineThickness(characters, project.title))),
+                              width,
                               height,
                               backgroundColor: coverColor(project.title),
                               transform: lean ? [{ rotate: `${lean}deg` }] : undefined,
@@ -759,25 +835,20 @@ function coverColor(title: string): string {
                       );
                     })}
                   </View>
-                  {/* 与网格同一套：板盖在书上、只露下段，上沿压住书脚。层板按行宽折算，
-                      写死 14 会在宽行上被拉扁。 */}
-                  <View style={{ position: "absolute", left: -60, right: -60, bottom: 0, height: spinePlankTop, overflow: "hidden" }}>
-                    <ImageBackground
-                      source={PLANK_IMAGE}
-                      resizeMode="stretch"
-                      style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: spinePlankHeight }}
-                    />
-                  </View>
                 </View>
                 <View style={styles.spineLabels}>
-                  {row.map((project) => (
-                    <View key={project.id} style={styles.spineLabelCell}>
-                      <Text style={styles.spineLabel} numberOfLines={1}>{project.title}</Text>
-                      <Text style={styles.spineStats} numberOfLines={1}>
-                        {stats[project.id] ? `${stats[project.id].chapters} 章 · ${((stats[project.id]?.characters ?? 0) / 10000).toFixed(1)} 万字` : "…"}
-                      </Text>
-                    </View>
-                  ))}
+                  {row.map((project, index) => {
+                    // 标签跟着各自那本书的宽度和左侧间距走：一排里书宽窄不一，标签也宽窄不一才对得上。
+                    const { width, marginLeft } = spineLayoutAt(row, index, spineCharacters, spineMaxWidth);
+                    return (
+                      <View key={project.id} style={[styles.spineLabelCell, { width, marginLeft }]}>
+                        <Text style={styles.spineLabel} numberOfLines={1}>{project.title}</Text>
+                        <Text style={styles.spineStats} numberOfLines={1}>
+                          {stats[project.id] ? `${stats[project.id].chapters} 章 · ${((stats[project.id]?.characters ?? 0) / 10000).toFixed(1)} 万字` : "…"}
+                        </Text>
+                      </View>
+                    );
+                  })}
                 </View>
               </View>
             );
@@ -957,12 +1028,12 @@ function coverColor(title: string): string {
                         <Text style={[styles.title, { fontSize: 14 }]}>{category.name}</Text>
                         <Text style={styles.categoryMeta}>{count} 部作品</Text>
                       </View>
-                      <Pressable accessibilityLabel={`重命名 ${category.name}`} onPress={() => setRenamingCategory({ id: category.id, name: category.name })} style={styles.iconButton}>
+                      <ScalePress accessibilityLabel={`重命名 ${category.name}`} onPress={() => setRenamingCategory({ id: category.id, name: category.name })} style={styles.iconButton}>
                         <Ionicons name="create-outline" size={19} color={colors.textMuted} />
-                      </Pressable>
-                      <Pressable accessibilityLabel={`删除 ${category.name}`} onPress={() => removeCategory(category)} style={styles.iconButton}>
+                      </ScalePress>
+                      <ScalePress accessibilityLabel={`删除 ${category.name}`} onPress={() => removeCategory(category)} style={styles.iconButton}>
                         <Ionicons name="trash-outline" size={19} color={colors.textMuted} />
-                      </Pressable>
+                      </ScalePress>
                     </View>
                   );
                 }) : <Text style={styles.categorySectionHint}>还没有分类，先创建一个。</Text>}
@@ -985,6 +1056,21 @@ function coverColor(title: string): string {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* 先把卡收掉再执行动作：动作里可能开别的弹层，卡片留在上面会挡住新开的那一层。 */}
+      <ConfirmDialog
+        visible={Boolean(confirmRequest)}
+        title={confirmRequest?.title ?? ""}
+        message={confirmRequest?.message ?? ""}
+        confirmLabel={confirmRequest?.confirmLabel}
+        danger={confirmRequest?.danger}
+        onClose={() => setConfirmRequest(null)}
+        onConfirm={() => {
+          const request = confirmRequest;
+          setConfirmRequest(null);
+          request?.onConfirm();
+        }}
+      />
     </Screen>
   );
 }
@@ -1036,7 +1122,8 @@ const styles = StyleSheet.create({
   spineTitleWrap: { width: "100%", alignItems: "center", overflow: "hidden" },
   spineTitle: { color: "rgba(255,255,255,0.96)", fontSize: 11, fontWeight: "700", lineHeight: 13, height: 13, textAlign: "center" },
   spineLabels: { flexDirection: "row", marginTop: 8 },
-  spineLabelCell: { flex: 1, minWidth: 0 },
+  // 宽度与左侧间距由 spineLayoutAt 按各自那本书给（不再 flex 均分），这里只兜住窄书的收缩。
+  spineLabelCell: { minWidth: 0 },
   spineLabel: { color: colors.text, fontSize: 11, fontWeight: "600", textAlign: "center" },
   spineStats: { marginTop: 2, color: colors.textMuted, fontSize: 10, textAlign: "center" },
   shelfLabelCell: { alignItems: "center" },
@@ -1088,4 +1175,4 @@ const styles = StyleSheet.create({
 });
 
 // 作品菜单进顶部面板后的容器：行自带左右内边距，这里只补行距与底部留白。
-const menuSheetBody = { paddingBottom: spacing.xl, gap: 2 } as const;
+const menuSheetBody = { gap: 2 } as const;

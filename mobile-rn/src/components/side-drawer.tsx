@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Animated, BackHandler, Dimensions, Easing, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { PlainScrollView } from "@/components/ui";
+import { PlainScrollView, ScalePress } from "@/components/ui";
 import { colors, radius, spacing } from "@/theme";
 
 const DRAWER_WIDTH_RATIO = 0.76;
@@ -125,9 +125,9 @@ export function SideDrawer({
             <Text numberOfLines={1} style={styles.panelTitle}>{title}</Text>
             {meta ? <Text numberOfLines={1} style={styles.panelMeta}>{meta}</Text> : null}
           </View>
-          <Pressable accessibilityLabel="关闭侧边栏" onPress={onClose} style={styles.iconButton}>
-            <Ionicons name="close" size={20} color={colors.textMuted} />
-          </Pressable>
+          <ScalePress accessibilityLabel="关闭侧边栏" onPress={onClose} style={styles.iconButton}>
+            <Ionicons name="close" size={19} color={colors.textMuted} />
+          </ScalePress>
         </View>
 
         <PlainScrollView contentContainerStyle={styles.panelBody} keyboardShouldPersistTaps="handled">
@@ -167,8 +167,8 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.sm,
   },
   panelHeading: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "baseline", gap: spacing.sm },
-  panelTitle: { color: colors.text, fontSize: 18, fontWeight: "700" },
-  panelMeta: { color: colors.textMuted, fontSize: 12 },
+  panelTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
+  panelMeta: { color: colors.textMuted, fontSize: 11 },
   iconButton: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   panelBody: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },
 });
