@@ -18,7 +18,7 @@ import {
 } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 
-import { Button, ConfirmDialog, EmptyState, ErrorNotice, Header, PlainScrollView, PromptDialog, Screen, BottomSheet, TopSheet } from "@/components/ui";
+import { BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, Header, PlainScrollView, PromptDialog, ScalePress, Screen, TopSheet } from "@/components/ui";
 import { ChapterDrawer } from "@/components/chapter-drawer";
 import { ensureEditorFontLoaded } from "@/settings/font-loader";
 import { debounce } from "@/lib/debounce";
@@ -866,25 +866,28 @@ export function WritingScreen() {
       : "章节名";
 
   if (!projectId) return <Screen><EmptyState title="请先从书架选择一部作品" /></Screen>;
-  if (loading) return <Screen><Header title="写作" /><View style={styles.loading}><Text style={styles.muted}>正在打开作品...</Text></View></Screen>;
+  // 只在「刚进来、手上还没有数据」时整页早退。切作品、写操作引发的重载若也走这里，
+  // 整棵页面树（含侧边抽屉与编辑器）会被卸载重建，抽屉里哪个作品展开着、菜单开着都会丢，
+  // 看着就是卡一下。手上已有数据时保持挂载，新数据到了原地替换。
+  if (loading && !project) return <Screen><Header title="写作" /><View style={styles.loading}><Text style={styles.muted}>正在打开作品...</Text></View></Screen>;
 
   return (
     <Screen>
       <Header
         leading={(
-          <Pressable accessibilityLabel="作品结构" onPress={() => setDrawerVisible(true)} style={styles.iconButton}>
+          <ScalePress accessibilityLabel="作品结构" onPress={() => setDrawerVisible(true)} style={styles.iconButton}>
             {/* 两条线，一长一短：与多数阅读类应用的入口一致，不与返回箭头混。 */}
             <View style={styles.menuGlyph}>
               <View style={[styles.menuGlyphBar, styles.menuGlyphBarLong]} />
               <View style={[styles.menuGlyphBar, styles.menuGlyphBarShort]} />
             </View>
-          </Pressable>
+          </ScalePress>
         )}
         title={project?.title ?? "写作"}
         action={(
-          <Pressable accessibilityLabel="更多操作" onPress={() => setHeaderMenuVisible((value) => !value)} style={styles.iconButton}>
+          <ScalePress accessibilityLabel="更多操作" onPress={() => setHeaderMenuVisible((value) => !value)} style={styles.iconButton}>
             <Ionicons name="ellipsis-horizontal" size={20} color={colors.primary} />
-          </Pressable>
+          </ScalePress>
         )}
       />
       {headerMenuVisible ? (
@@ -923,7 +926,7 @@ export function WritingScreen() {
               <Text style={styles.previewMeta}>{characterCount + " 字" + (savedAt ? " · " + savedAt + " 已保存" : "")}</Text>
             </View>
             {pendingEvolution ? (
-              <Pressable
+              <ScalePress
                 accessibilityLabel="进化作者文风"
                 disabled={saving || evolvingStyle}
                 onPress={() => setConfirmRequest({
@@ -937,7 +940,7 @@ export function WritingScreen() {
                 {evolvingStyle
                   ? <ActivityIndicator size="small" color={colors.primary} />
                   : <Ionicons name="sparkles-outline" size={22} color={colors.primary} />}
-              </Pressable>
+              </ScalePress>
             ) : null}
             <Pressable accessibilityLabel="编辑章节" onPress={() => setEditing(true)} style={styles.editButton}>
               <Ionicons name="create-outline" size={22} color={colors.primary} />
@@ -1105,14 +1108,14 @@ export function WritingScreen() {
                     <Text numberOfLines={1} style={styles.historyRowSummary}>{versionSummary(version.content)}</Text>
                     <Text style={styles.historyRowMeta}>{version.characterCount + " 字"}</Text>
                   </View>
-                  <Pressable
+                  <ScalePress
                     accessibilityLabel="删除这一版历史"
                     onPress={(event) => { event.stopPropagation(); removeVersion(version); }}
                     hitSlop={8}
                     style={styles.iconButton}
                   >
                     <Ionicons name="trash-outline" size={19} color={colors.textMuted} />
-                  </Pressable>
+                  </ScalePress>
                 </Pressable>
               )) : (
                 <EmptyState title="还没有历史版本" />
@@ -1129,27 +1132,27 @@ export function WritingScreen() {
         onClose={() => setExportPickerVisible(false)}
       >
             <View style={styles.exportFormatRow}>
-              <Pressable
+              <ScalePress
                 accessibilityLabel="导出为 Markdown"
                 onPress={() => setExportFormat("markdown")}
                 style={[styles.exportFormatChip, exportFormat === "markdown" && styles.exportFormatChipActive]}
               >
                 <Text style={[styles.exportFormatText, exportFormat === "markdown" && styles.exportFormatTextActive]}>Markdown</Text>
-              </Pressable>
-              <Pressable
+              </ScalePress>
+              <ScalePress
                 accessibilityLabel="导出为纯文本"
                 onPress={() => setExportFormat("txt")}
                 style={[styles.exportFormatChip, exportFormat === "txt" && styles.exportFormatChipActive]}
               >
                 <Text style={[styles.exportFormatText, exportFormat === "txt" && styles.exportFormatTextActive]}>纯文本（TXT）</Text>
-              </Pressable>
-              <Pressable
+              </ScalePress>
+              <ScalePress
                 accessibilityLabel="导出为 EPUB"
                 onPress={() => setExportFormat("epub")}
                 style={[styles.exportFormatChip, exportFormat === "epub" && styles.exportFormatChipActive]}
               >
                 <Text style={[styles.exportFormatText, exportFormat === "epub" && styles.exportFormatTextActive]}>EPUB</Text>
-              </Pressable>
+              </ScalePress>
             </View>
             <Text style={styles.exportFormatHint}>
               {exportFormat === "txt"
@@ -1286,13 +1289,15 @@ const styles = StyleSheet.create({
   editorFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: spacing.md },
   previewActions: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", gap: spacing.sm },
   counter: { flex: 1, color: colors.textMuted, fontSize: 12 },
-  exportFormatRow: { flexDirection: "row", gap: spacing.xs, paddingHorizontal: spacing.sm, paddingBottom: spacing.xs },
+  // 导出面板本体是全宽贴屏幕两边的，三部分（芯片行 / 说明 / 选项行）各自留左右边距，
+  // 不留就顶到屏幕缘；三者用同一个值，左缘才对齐成一条线。
+  exportFormatRow: { flexDirection: "row", gap: spacing.xs, paddingHorizontal: spacing.lg, paddingBottom: spacing.xs },
   exportFormatChip: { flex: 1, minHeight: 38, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.surface },
   exportFormatChipActive: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
   exportFormatText: { color: colors.textMuted, fontSize: 13, fontWeight: "600" },
   exportFormatTextActive: { color: colors.primary },
-  exportFormatHint: { paddingHorizontal: spacing.sm, paddingBottom: spacing.xs, color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-  exportOption: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  exportFormatHint: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xs, color: colors.textMuted, fontSize: 12, lineHeight: 18 },
+  exportOption: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   exportOptionDisabled: { opacity: 0.48 },
   exportOptionText: { flex: 1, minWidth: 0, gap: 2 },
   exportOptionTitle: { color: colors.text, fontSize: 16, fontWeight: "700" },
