@@ -8,7 +8,6 @@ import {
   Image,
   ActivityIndicator,
   PanResponder,
-  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -42,7 +41,7 @@ import { appendCrashLog } from "@/lib/crash-log";
 import { throttle } from "@/lib/debounce";
 import { MessageActionBar } from "@/components/message-action-bar";
 import { SessionDrawer } from "@/components/session-drawer";
-import { AdaptiveScroll, BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, Header, PromptDialog, Screen, TopSheet } from "@/components/ui";
+import { AdaptiveScroll, BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, Header, PromptDialog, ScalePress, Screen, TopSheet } from "@/components/ui";
 import {
   addMessage,
   createChatSession,
@@ -165,7 +164,7 @@ const APPROVAL_MODES: Array<{ id: WriteApprovalMode; label: string; hint: string
 ];
 
 function requestToolApproval(
-  emit: ((req: WriteCardRequest) => void) | null,
+  emit: (req: WriteCardRequest) => void,
   requestToken: number,
   name: string,
   args: Record<string, unknown>,
@@ -177,14 +176,11 @@ function requestToolApproval(
   if (mode === "auto" && !isDestructiveTool(name)) return Promise.resolve(true);
   if (!preview) {
     const details = JSON.stringify(args, null, 2).slice(0, 1_200);
+    // 一律交给写入审批卡呈现（emitWriteCard 由本页定义，恒可用）。
+    // 此前这里还有一条系统弹窗的兜底分支，条件是 emit 为空 —— 唯一调用点
+    // 永远传 emitWriteCard，那条分支走不到、从未弹过，已删。
     return new Promise((resolve) => {
-      if (emit) emit({ requestToken, name, details, resolve });
-      else {
-        Alert.alert("确认工具调用", `${name}\n\n${details}`, [
-          { text: "拒绝", style: "cancel", onPress: () => resolve(false) },
-          { text: "允许一次", onPress: () => resolve(true) },
-        ], { cancelable: false });
-      }
+      emit({ requestToken, name, details, resolve });
     });
   }
   const before = preview.before.trim() || "（当前为空）";
@@ -298,6 +294,9 @@ export function AssistantScreen() {
   /** 聊天列表为 inverted（业界标准：GiftedChat 等）——offset 0 恒为最新消息，
    *  打开 / 切换 / 发送天然落在最新，无需任何滚动代码。 */
   const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
+  /** 列表此刻是否停在最新这一端：思考轨迹跑完要不要自动收起，先问它。
+   *  写 ref 不写 state —— 每次滚动都重渲染会拖慢列表本身。 */
+  const atBottomRef = useRef(true);
   const [models, setModels] = useState<Model[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [defaultModelId, setDefaultModelId] = useState<string | null>(null);
@@ -1098,24 +1097,25 @@ export function AssistantScreen() {
     [contextWindow, historyLimit, messages],
   );
 
-  if (loading) return <Screen><Header title="助手" /><View style={styles.loading}><ActivityIndicator color={colors.primary} /></View></Screen>;
+  // 同写作页：只在首次没有任何数据时早退，避免切作品 / 写操作的刷新把整页连同抽屉一起重建。
+  if (loading && !project) return <Screen><Header title="助手" /><View style={styles.loading}><ActivityIndicator color={colors.primary} /></View></Screen>;
   return (
     <Screen>
       <Header
         leading={(
-          <Pressable accessibilityLabel="作品与对话" onPress={() => setDrawerVisible(true)} style={styles.iconButton}>
+          <ScalePress accessibilityLabel="作品与对话" onPress={() => setDrawerVisible(true)} style={styles.iconButton}>
             {/* 两条线，一长一短：与写作页左上角同一个入口画法，两页手势一致。 */}
             <View style={styles.menuGlyph}>
               <View style={[styles.menuGlyphBar, styles.menuGlyphBarLong]} />
               <View style={[styles.menuGlyphBar, styles.menuGlyphBarShort]} />
             </View>
-          </Pressable>
+          </ScalePress>
         )}
         title="助手"
         action={(
-          <Pressable accessibilityLabel="上下文占用" onPress={() => setContextSheetVisible(true)} style={styles.iconButton}>
+          <ScalePress accessibilityLabel="上下文占用" onPress={() => setContextSheetVisible(true)} style={styles.iconButton}>
             <Ionicons name="pie-chart-outline" size={20} color={colors.primary} />
-          </Pressable>
+          </ScalePress>
         )}
       />
       <View style={styles.contextBar}>
@@ -1167,114 +1167,109 @@ export function AssistantScreen() {
           // 增长、展开或收起执行轨迹也改高度），偏移被反复改写会把单元排到错误的
           // 位置上，表现为文字堆在一起或滑到一片空白。
           inverted
+          // 只记位置、不写 state：跑完自动收起前要问"用户是不是停在最新这一端"。
+          onScroll={(event) => { atBottomRef.current = event.nativeEvent.contentOffset.y <= 8; }}
+          scrollEventThrottle={16}
           contentContainerStyle={messages.length ? styles.messages : styles.emptyMessages}
-          ListHeaderComponent={sending || liveTrace || writeCard || pendingQuestion ? (
+          ListHeaderComponent={sending || liveTrace || writeCard ? (
             <View style={styles.liveTimeline}>
-              {sending || liveTrace ? (
-                <>
-                  <View style={styles.liveHeader}>
-                    <ActivityIndicator size="small" color={colors.primary} />
-                    <Text style={styles.liveHeaderText}>处理中 · 已处理 {thinkingSeconds}s</Text>
+              {/* 跑动中的时长由组头自己写「已处理 Ns」，这里不再另画一行同义的状态条。 */}
+              {liveTrace ? <AgentTraceView trace={liveTrace} defaultExpanded inline liveElapsedSeconds={thinkingSeconds} listAtBottomRef={atBottomRef} /> : null}
+              {streamingContent ? (
+                <View style={styles.streamingBubble}>
+                  <View style={styles.messageHeader}>
+                    <Text style={styles.messageRole}>Storyloom</Text>
                   </View>
-                  {liveTrace ? <AgentTraceView trace={liveTrace} defaultExpanded inline /> : null}
-                  {streamingContent ? (
-                    <View style={styles.streamingBubble}>
-                      <View style={styles.messageHeader}>
-                        <Text style={styles.messageRole}>Storyloom</Text>
-                      </View>
-                      <Text selectable style={[styles.messageText, chatTextStyle]}>{streamingContent}</Text>
-                    </View>
-                  ) : null}
-                </>
-              ) : null}
-              {writeCard ? (
-                <View style={styles.writeCard}>
-                  <View style={styles.writeCardHeader}>
-                    <Text style={styles.writeCardTitle}>写入确认</Text>
-                    <Text numberOfLines={1} style={styles.writeCardTarget}>{writeCard.target ?? writeCard.name}</Text>
-                    <Text style={styles.writeBadge}>待确认</Text>
-                  </View>
-                  <AdaptiveScroll maxHeight={300} style={styles.writeCardScroll} claimGesture>
-                  {writeCard.actionOnly ? (
-                    <Text style={styles.writeCardDetails}>{writeCard.after}</Text>
-                  ) : writeCard.before !== undefined && writeCard.after !== undefined ? (() => {
-                    const stats = diffLineStats(writeCard.before, writeCard.after);
-                    const afterLines = writeCard.after.split("\n").filter((line) => line.trim().length > 0);
-                    const beforeLines = writeCard.before.split("\n").filter((line) => line.trim().length > 0);
-                    return (
-                      <>
-                        <View style={styles.writeStats}>
-                          <Text style={styles.writeStatAdd}>+{stats.added} 行</Text>
-                          <Text style={styles.writeStatDel}>−{stats.removed} 行</Text>
-                        </View>
-                        {writeDiffExpanded ? (
-                          <AdaptiveScroll maxHeight={260} style={styles.writeDiffScroll} claimGesture>
-                            <Text style={styles.writeDiffLabel}>写入前</Text>
-                            {beforeLines.length === 0 ? (
-                              <Text style={styles.writeDiffDel}>− （当前为空）</Text>
-                            ) : beforeLines.slice(0, 120).map((line, idx) => (
-                              <Text key={"b" + idx} style={styles.writeDiffDel} numberOfLines={2}>− {line}</Text>
-                            ))}
-                            <Text style={[styles.writeDiffLabel, styles.writeDiffLabelSpaced]}>写入后</Text>
-                            {afterLines.slice(0, 120).map((line, idx) => (
-                              <Text key={"a" + idx} style={styles.writeDiffAdd} numberOfLines={2}>+ {line}</Text>
-                            ))}
-                          </AdaptiveScroll>
-                        ) : (
-                          <View style={styles.writeDiff}>
-                            <Text style={styles.writeDiffLabel}>写入前</Text>
-                            {beforeLines.length === 0 ? (
-                              <Text style={styles.writeDiffDel}>− （当前为空）</Text>
-                            ) : beforeLines.slice(0, 2).map((line, idx) => (
-                              <Text key={"b" + idx} style={styles.writeDiffDel} numberOfLines={1}>− {line}</Text>
-                            ))}
-                            <Text style={[styles.writeDiffLabel, styles.writeDiffLabelSpaced]}>写入后</Text>
-                            {afterLines.slice(0, 3).map((line, idx) => (
-                              <Text key={"a" + idx} style={styles.writeDiffAdd} numberOfLines={1}>+ {line}</Text>
-                            ))}
-                          </View>
-                        )}
-                        <Pressable accessibilityRole="button" onPress={() => setWriteDiffExpanded((value) => !value)} style={styles.writeDiffToggle}>
-                          <Text style={styles.writeDiffToggleText}>{writeDiffExpanded ? "收起变更" : `展开全部 ${stats.added + stats.removed} 行变更`}</Text>
-                          <Ionicons name={writeDiffExpanded ? "chevron-up" : "chevron-down"} size={15} color={colors.textMuted} />
-                        </Pressable>
-                      </>
-                    );
-                  })(                  ) : writeCard.details ? (
-                    <Text style={styles.writeCardDetails}>{writeCard.details}</Text>
-                  ) : null}
-                  </AdaptiveScroll>
-                  <View style={styles.writeCardActions}>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => {
-                        if (writeCard.requestToken !== sendRequestRef.current) return;
-                        writeCard.resolve(false);
-                        setWriteCard(null);
-                      }}
-                      style={styles.writeCardButtonSecondary}
-                    >
-                      <Text style={styles.writeCardButtonSecondaryText}>驳回</Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => {
-                        if (writeCard.requestToken !== sendRequestRef.current) return;
-                        writeCard.resolve(true);
-                        setWriteCard(null);
-                      }}
-                      style={styles.writeCardButtonPrimary}
-                    >
-                      <Text style={styles.writeCardButtonPrimaryText}>接受</Text>
-                    </Pressable>
-                  </View>
+                  <Text selectable style={[styles.messageText, chatTextStyle]}>{streamingContent}</Text>
                 </View>
               ) : null}
-              <AgentQuestionSheet
-                request={pendingQuestion}
-                onSubmit={(answers) => finishQuestion({ answers, cancelled: false })}
-                onCancel={() => finishQuestion({ answers: [], cancelled: true })}
-              />
+              {writeCard ? (
+                <Modal visible transparent animationType="fade" onRequestClose={() => { /* 返回键不算决定：只有按按钮才算 */ }}>
+                  <View style={styles.writeDialogBackdrop}>
+                    <View style={styles.writeDialogCard}>
+                      <View style={styles.writeCardHeader}>
+                        <Text style={styles.writeCardTitle}>写入确认</Text>
+                        <Text numberOfLines={1} style={styles.writeCardTarget}>{writeCard.target ?? writeCard.name}</Text>
+                        <Text style={styles.writeBadge}>待确认</Text>
+                      </View>
+                      <AdaptiveScroll maxHeight={300} style={styles.writeCardScroll}>
+                        {writeCard.actionOnly ? (
+                          <Text style={styles.writeCardDetails}>{writeCard.after}</Text>
+                        ) : writeCard.before !== undefined && writeCard.after !== undefined ? (() => {
+                          const stats = diffLineStats(writeCard.before, writeCard.after);
+                          const afterLines = writeCard.after.split("\n").filter((line) => line.trim().length > 0);
+                          const beforeLines = writeCard.before.split("\n").filter((line) => line.trim().length > 0);
+                          return (
+                            <>
+                              <View style={styles.writeStats}>
+                                <Text style={styles.writeStatAdd}>+{stats.added} 行</Text>
+                                <Text style={styles.writeStatDel}>−{stats.removed} 行</Text>
+                              </View>
+                              {writeDiffExpanded ? (
+                                <AdaptiveScroll maxHeight={260} style={styles.writeDiffScroll}>
+                                  <Text style={styles.writeDiffLabel}>写入前</Text>
+                                  {beforeLines.length === 0 ? (
+                                    <Text style={styles.writeDiffDel}>− （当前为空）</Text>
+                                  ) : beforeLines.slice(0, 120).map((line, idx) => (
+                                    <Text key={"b" + idx} style={styles.writeDiffDel} numberOfLines={2}>− {line}</Text>
+                                  ))}
+                                  <Text style={[styles.writeDiffLabel, styles.writeDiffLabelSpaced]}>写入后</Text>
+                                  {afterLines.slice(0, 120).map((line, idx) => (
+                                    <Text key={"a" + idx} style={styles.writeDiffAdd} numberOfLines={2}>+ {line}</Text>
+                                  ))}
+                                </AdaptiveScroll>
+                              ) : (
+                                <View style={styles.writeDiff}>
+                                  <Text style={styles.writeDiffLabel}>写入前</Text>
+                                  {beforeLines.length === 0 ? (
+                                    <Text style={styles.writeDiffDel}>− （当前为空）</Text>
+                                  ) : beforeLines.slice(0, 2).map((line, idx) => (
+                                    <Text key={"b" + idx} style={styles.writeDiffDel} numberOfLines={1}>− {line}</Text>
+                                  ))}
+                                  <Text style={[styles.writeDiffLabel, styles.writeDiffLabelSpaced]}>写入后</Text>
+                                  {afterLines.slice(0, 3).map((line, idx) => (
+                                    <Text key={"a" + idx} style={styles.writeDiffAdd} numberOfLines={1}>+ {line}</Text>
+                                  ))}
+                                </View>
+                              )}
+                              <Pressable accessibilityRole="button" onPress={() => setWriteDiffExpanded((value) => !value)} style={styles.writeDiffToggle}>
+                                <Text style={styles.writeDiffToggleText}>{writeDiffExpanded ? "收起变更" : `展开全部 ${stats.added + stats.removed} 行变更`}</Text>
+                                <Ionicons name={writeDiffExpanded ? "chevron-up" : "chevron-down"} size={15} color={colors.textMuted} />
+                              </Pressable>
+                            </>
+                          );
+                        })() : writeCard.details ? (
+                          <Text style={styles.writeCardDetails}>{writeCard.details}</Text>
+                        ) : null}
+                      </AdaptiveScroll>
+                      <View style={styles.writeCardActions}>
+                        <Pressable
+                          accessibilityRole="button"
+                          onPress={() => {
+                            if (writeCard.requestToken !== sendRequestRef.current) return;
+                            writeCard.resolve(false);
+                            setWriteCard(null);
+                          }}
+                          style={styles.writeCardButtonSecondary}
+                        >
+                          <Text style={styles.writeCardButtonSecondaryText}>驳回</Text>
+                        </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          onPress={() => {
+                            if (writeCard.requestToken !== sendRequestRef.current) return;
+                            writeCard.resolve(true);
+                            setWriteCard(null);
+                          }}
+                          style={styles.writeCardButtonPrimary}
+                        >
+                          <Text style={styles.writeCardButtonPrimaryText}>接受</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  </View>
+                </Modal>
+              ) : null}
             </View>
           ) : null}
           ListEmptyComponent={models.length ? (
@@ -1282,9 +1277,9 @@ export function AssistantScreen() {
               <Text style={styles.welcomeTitle}>聊灵感、记想法</Text>
               <View style={styles.welcomeChipsRow}>
               {["记一个灵感", "梳理一下我的想法", "随便聊聊"].map((suggestion) => (
-                <Pressable key={suggestion} style={styles.welcomeChip} onPress={() => { void ensureConversation().then(() => setInput(suggestion)); }}>
+                <ScalePress key={suggestion} style={styles.welcomeChip} onPress={() => { void ensureConversation().then(() => setInput(suggestion)); }}>
                   <Text style={styles.welcomeChipText}>{suggestion}</Text>
-                </Pressable>
+                </ScalePress>
               ))}
               </View>
             </View>
@@ -1408,9 +1403,9 @@ export function AssistantScreen() {
                 <Ionicons name="create-outline" size={17} color={colors.primary} />
                 <Text style={styles.editingText}>正在编辑之前的发言</Text>
               </View>
-              <Pressable accessibilityLabel="取消编辑" onPress={cancelMessageEdit} style={styles.iconButton}>
+              <ScalePress accessibilityLabel="取消编辑" onPress={cancelMessageEdit} style={styles.iconButton}>
                 <Ionicons name="close" size={20} color={colors.textMuted} />
-              </Pressable>
+              </ScalePress>
             </View>
           ) : null}
           <View style={styles.composerArea}>
@@ -1466,14 +1461,14 @@ export function AssistantScreen() {
             </View>
           ) : null}
           <View style={styles.composer}>
-            <Pressable
+            <ScalePress
               accessibilityLabel="打开输入菜单"
               disabled={sending}
               onPress={() => setComposerMenu((current) => (current ? null : "root"))}
               style={({ pressed }) => [styles.attachButton, (pressed || sending) && styles.sendDisabled]}
             >
               <Ionicons name={composerMenu ? "close" : "add"} size={24} color={colors.primary} />
-            </Pressable>
+            </ScalePress>
             <TextInput
               ref={composerRef}
               value={input}
@@ -1486,14 +1481,14 @@ export function AssistantScreen() {
               multiline
               maxLength={12000}
             />
-            <Pressable
+            <ScalePress
               accessibilityLabel={editingMessageId ? "重发编辑后的消息" : "发送"}
               disabled={!selection || !input.trim() || sending}
               onPress={() => void send(retryRequest && input.trim() === retryRequest.userMessage.content ? retryRequest : null)}
               style={({ pressed }) => [styles.sendButton, (pressed || !selection || !input.trim()) && styles.sendDisabled]}
             >
               {sending ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Ionicons name="arrow-up" size={20} color="#FFFFFF" />}
-            </Pressable>
+            </ScalePress>
           </View>
           </View>
         </View>
@@ -1564,7 +1559,6 @@ export function AssistantScreen() {
               style={styles.panelList}
               data={models}
               keyExtractor={(item) => item.id}
-              contentContainerStyle={[styles.sheetList, styles.panelListBottom]}
               ListHeaderComponent={
                 <Pressable onPress={() => void chooseModel(null)} style={[styles.sheetRow, activeSession?.modelId === null && styles.sheetRowActive]}>
                   <Ionicons name={activeSession?.modelId === null ? "radio-button-on" : "radio-button-off"} size={20} color={activeSession?.modelId === null ? colors.primary : colors.textMuted} />
@@ -1599,7 +1593,6 @@ export function AssistantScreen() {
               style={styles.panelList}
               data={styleProfiles}
               keyExtractor={(item) => item.id}
-              contentContainerStyle={[styles.sheetList, styles.panelListBottom]}
               ListHeaderComponent={(
                 <Pressable onPress={() => void chooseStyle(null)} style={[styles.sheetRow, !activeStyleProfile && styles.sheetRowActive]}>
                   <Ionicons name={!activeStyleProfile ? "radio-button-on" : "radio-button-off"} size={20} color={!activeStyleProfile ? colors.primary : colors.textMuted} />
@@ -1660,6 +1653,13 @@ export function AssistantScreen() {
           setRenameTitle(session.title);
         }}
         onDeleteSession={(_target, session) => { confirmDeleteSession(session); }}
+      />
+
+      {/* 提问卡：AI 停下来等你回答，所以浮在屏幕中间（一屏一题由组件内部管步进）。 */}
+      <AgentQuestionSheet
+        request={pendingQuestion}
+        onSubmit={(answers) => finishQuestion({ answers, cancelled: false })}
+        onCancel={() => finishQuestion({ answers: [], cancelled: true })}
       />
 
       {/* 先把卡收掉再执行动作：动作里可能再弹一张（例如存入资料的结果）。 */}
@@ -1732,12 +1732,11 @@ const styles = StyleSheet.create({
   errorWrap: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
   messages: { padding: spacing.lg, gap: spacing.md },
   liveTimeline: { marginTop: spacing.md, gap: spacing.sm },
-  liveHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xs },
-  liveHeaderText: { color: colors.text, fontSize: 13, fontWeight: "600" },
   // 流式正文：与落定后的消息气泡同一套排版，只是还没进消息列表。
   streamingBubble: { gap: spacing.xs, paddingVertical: spacing.xs },
   emptyMessages: { flexGrow: 1 },
-  message: { gap: spacing.md, paddingVertical: spacing.md },
+  // 消息内间距比别处紧一档（12 → 8）：过程轨迹与正文要连成一段，不能再被空档切开。
+  message: { gap: spacing.sm, paddingVertical: spacing.md },
   messageHeader: { minHeight: 28, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
   messageEditRowOutside: { alignSelf: "flex-end", flexDirection: "row", alignItems: "center", gap: 10, marginTop: 2, paddingRight: 2 },
   messageEditButton: { minHeight: 32, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.xs },
@@ -1785,22 +1784,18 @@ const styles = StyleSheet.create({
   approvalHint: { marginTop: 2, color: colors.textMuted, fontSize: 11, lineHeight: 16 },
   composer: { flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 6, paddingRight: 6, paddingVertical: 6, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, borderRadius: 999, ...shadow.card },
   writeBadge: { marginLeft: "auto", color: colors.primary, fontSize: 11, fontWeight: "800", backgroundColor: "rgba(23,107,87,0.12)", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3, overflow: "hidden" },
-  writeCard: {
-    alignSelf: "flex-start",
-    maxWidth: "88%",
-    maxHeight: 420,
-    overflow: "hidden",
-    marginTop: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
+  // 写入确认卡与提问卡同一套居中卡形态：遮罩 0.48、卡内边距 24、圆角 14、底色跟页面同色。
+  writeDialogBackdrop: { flex: 1, justifyContent: "center", padding: spacing.lg, backgroundColor: colors.overlay },
+  writeDialogCard: {
+    maxHeight: "80%",
+    gap: spacing.md,
+    padding: spacing.xl,
     borderRadius: radius.md,
-    backgroundColor: "#EFF3F0",
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    backgroundColor: colors.background,
   },
   writeCardScroll: { maxHeight: 300 },
   writeCardHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  writeCardTitle: { color: colors.text, fontSize: 14, fontWeight: "700" },
+  writeCardTitle: { color: colors.text, fontSize: 18, fontWeight: "700" },
   writeCardTarget: { flexShrink: 1, minWidth: 0, color: colors.textMuted, fontSize: 12 },
   writeCardDetails: { marginTop: spacing.xs, color: colors.text, fontSize: 12, lineHeight: 18 },
   writeCardActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm, marginTop: spacing.sm },
@@ -1858,7 +1853,6 @@ const styles = StyleSheet.create({
   composerInput: { flex: 1, maxHeight: 130, minHeight: 40, paddingHorizontal: spacing.sm, paddingVertical: 10, color: colors.text, fontSize: 16 },
   sendButton: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary },
   sendDisabled: { opacity: 0.48 },
-  sheetList: { paddingBottom: spacing.xl },
   sheetRow: {
     minHeight: 62,
     flexDirection: "row",
@@ -1871,8 +1865,6 @@ const styles = StyleSheet.create({
   },
   // 弹层里的列表：高度上限由面板给，超出在这里滚。
   panelList: { flexShrink: 1 },
-  // 列表容器：行自带左右内边距，这里只补底部留白，不重复缩进。
-  panelListBottom: { paddingBottom: spacing.xl },
   sheetRowActive: { backgroundColor: colors.surfaceMuted },
   sheetRowText: { flex: 1, minWidth: 0 },
   sheetRowTitle: { color: colors.text, fontSize: 15, fontWeight: "600" },

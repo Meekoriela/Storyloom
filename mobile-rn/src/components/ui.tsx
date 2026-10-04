@@ -1,7 +1,7 @@
 // 本文件基于 OpenFicM（Apache-2.0）修改
 // 改动说明见仓库根目录 docs/上游来源与改动清单.md
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useRef, useState, type PropsWithChildren, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type PropsWithChildren, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -13,6 +13,7 @@ import {
   Text,
   TextInput,
   View,
+  type PressableProps,
   type StyleProp,
   type TextInputProps,
   type ViewStyle,
@@ -45,9 +46,9 @@ export function Header({ title, action, onBack, leading }: { title?: ReactNode; 
     <View style={styles.header}>
       <View style={styles.headerLeading}>
         {onBack ? (
-          <Pressable accessibilityLabel="返回" onPress={onBack} style={styles.headerBack}>
+          <ScalePress accessibilityLabel="返回" onPress={onBack} style={styles.headerBack}>
             <Ionicons name="chevron-back" size={24} color={colors.text} />
-          </Pressable>
+          </ScalePress>
         ) : null}
         {leading}
         <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
@@ -100,11 +101,77 @@ export function Button({
   );
 }
 
+/**
+ * 小控件的按下反馈：按住缩到 0.94，松手弹回。
+ *
+ * 这套手感原先只有底部 tab 有，图标按钮、圆形按钮、chip 按下去是没有任何反馈的。
+ * 抽出来给这类小控件共用 —— 它们面积小、边界清楚，缩放不会显得晃。列表行与卡片
+ * 仍走「按下变底色」：整行缩放会让一大块跟着动。
+ */
+export function ScalePress({ style, onPressIn, onPressOut, children, ...rest }: PressableProps) {
+  const scale = useRef(new Animated.Value(1)).current;
+  return (
+    <Pressable
+      {...rest}
+      onPressIn={(event) => {
+        Animated.spring(scale, { toValue: 0.94, speed: 40, useNativeDriver: true }).start();
+        onPressIn?.(event);
+      }}
+      onPressOut={(event) => {
+        Animated.spring(scale, { toValue: 1, friction: 4, useNativeDriver: true }).start();
+        onPressOut?.(event);
+      }}
+      // 一律走函数式 style：调用方给的 style 可能是静态样式，也可能是「按下变底色」的函数，
+      // 两种都在这里汇到同一个数组里，再叠上缩放。
+      style={(state) => [typeof style === "function" ? style(state) : style, { transform: [{ scale }] }]}
+    >
+      {children}
+    </Pressable>
+  );
+}
+
 export function EmptyState({ title, action }: { title: string; action?: ReactNode }) {
   return (
     <View style={styles.empty}>
       <Text style={styles.emptyTitle}>{title}</Text>
       {action}
+    </View>
+  );
+}
+
+/**
+ * 顶栏下方的轻提示：顶栏下面一行小字，停留两秒后自己消失。
+ *
+ * 给「已经做完的事」用 —— 保存成功、导入完成、备份完成这类。它们不需要人做决定，
+ * 弹一张卡让人点「知道了」反而多一步。出错了走 `ErrorNotice`，要人拿主意走
+ * `ConfirmDialog`。
+ *
+ * 配 `useNotice` 用：页面拿 `[notice, showNotice]`，在顶栏下面放一个
+ * `<NoticeToast notice={notice} />`。
+ */
+export function useNotice(timeoutMs = 2000): [string | null, (message: string) => void] {
+  const [notice, setNotice] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showNotice = useCallback((message: string) => {
+    if (timer.current) clearTimeout(timer.current);
+    setNotice(message);
+    timer.current = setTimeout(() => setNotice(null), timeoutMs);
+  }, [timeoutMs]);
+
+  // 页面卸载时把定时器清掉，否则会在已卸载的页面上 setState。
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  return [notice, showNotice];
+}
+
+export function NoticeToast({ notice }: { notice: string | null }) {
+  if (!notice) return null;
+  return (
+    <View accessibilityLiveRegion="polite" style={styles.noticeWrap}>
+      <Text style={styles.noticeText}>{notice}</Text>
     </View>
   );
 }
@@ -469,6 +536,7 @@ export function AdaptiveScroll({
   contentContainerStyle,
   keyboardShouldPersistTaps,
   claimGesture = false,
+  followTail = false,
   children,
 }: PropsWithChildren<{
   maxHeight: number;
@@ -476,23 +544,61 @@ export function AdaptiveScroll({
   contentContainerStyle?: StyleProp<ViewStyle>;
   keyboardShouldPersistTaps?: boolean | "always" | "never" | "handled";
   /**
-   * 抢下手势：用在「倒置 FlatList 里内嵌的限高滚动」场景。
-   * 外层列表是 inverted 的，两层滚动方向判定相反，触摸会先被外层吃掉 ——
-   * 表现为「想滑卡内内容，结果整条对话跟着滑」。
+   * 抢下手势：用在「外层还有一层滚动列表、而此处是内嵌的限高滚动」的场景。
+   * 外层先吃到触摸，不抢的话「想滑框里的内容，结果整条列表跟着滑」。
    *
    * 只在**滑动**时抢，绝不在触摸开始就抢：`onStartShouldSetResponderCapture` 里
-   * 返回 true 会把展开区里所有可点元素一起吃掉（工具行、展开变更、提问选项），
+   * 返回 true 会把框里所有可点元素一起吃掉（工具行、展开变更、提问选项），
    * 表现为点了没反应。所以起手只记起点、返回 false，等位移超过阈值再抢。
+   *
+   * 抢之前还要看这一方向**框里还剩不剩可滚空间**：已经滑到头还把手势抢走，就成了
+   * 「抢了却不动、只剩系统那层回弹」——用户报的"在思考框里下滑会触底反弹"即此。
+   * 所以滑到头一律让给外层。
    */
   claimGesture?: boolean;
+  /**
+   * 跟着尾巴走：内容还在长的时候自动贴到最新一行。
+   *
+   * 用在「正在生成的实时轨迹」上 —— 涨过 maxHeight 之后不跟随的话，新内容全在框外，
+   * 只能靠用户自己滑着看。用户一旦自己拖动就暂停跟随（否则想回看前文会被一直拽回去），
+   * 滚回底部再自动恢复。
+   */
+  followTail?: boolean;
 }>) {
   const gestureStart = useRef<{ x: number; y: number } | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  const pinnedToTail = useRef(true);
+  // 框里现在滚到哪儿：抢手势前先看这个方向还有没有余量。写 ref 不写 state —— 每次滚动
+  // 都重渲染会反过来拖慢滚动本身。
+  const scrollMetrics = useRef({ y: 0, viewport: 0, content: 0 });
+  const trackScroll = claimGesture || followTail;
+
+  const followTailIfPinned = () => {
+    if (!followTail || !pinnedToTail.current) return;
+    scrollRef.current?.scrollToEnd({ animated: false });
+  };
+
   return (
     <ScrollView
+      ref={scrollRef}
       nestedScrollEnabled
       showsVerticalScrollIndicator={false}
       showsHorizontalScrollIndicator={false}
       keyboardShouldPersistTaps={keyboardShouldPersistTaps}
+      onContentSizeChange={followTail ? followTailIfPinned : undefined}
+      onScrollBeginDrag={followTail ? () => { pinnedToTail.current = false; } : undefined}
+      onScroll={trackScroll ? (event) => {
+        const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+        scrollMetrics.current = {
+          y: contentOffset.y,
+          viewport: layoutMeasurement.height,
+          content: contentSize.height,
+        };
+        if (followTail) {
+          pinnedToTail.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - 8;
+        }
+      } : undefined}
+      scrollEventThrottle={trackScroll ? 16 : undefined}
       onStartShouldSetResponderCapture={claimGesture ? (event) => {
         gestureStart.current = { x: event.nativeEvent.pageX, y: event.nativeEvent.pageY };
         return false;
@@ -502,7 +608,14 @@ export function AdaptiveScroll({
         if (!start) return false;
         const dx = event.nativeEvent.pageX - start.x;
         const dy = event.nativeEvent.pageY - start.y;
-        return Math.abs(dy) > 6 && Math.abs(dy) >= Math.abs(dx);
+        if (Math.abs(dy) <= 6 || Math.abs(dy) < Math.abs(dx)) return false;
+        const { y, viewport, content } = scrollMetrics.current;
+        // 框里装不下、或是根本没内容可滚：抢了也滑不动，直接让给外层。
+        if (content <= viewport + 1) return false;
+        // 手指下拖 = 框内往上滚（偏移减小）⇒ 只有没到顶时才有得滚；手指上拖同理。
+        if (dy > 0 && y <= 1) return false;
+        if (dy < 0 && y + viewport >= content - 1) return false;
+        return true;
       } : undefined}
       style={[styles.adaptiveScroll, style, { maxHeight }]}
       contentContainerStyle={contentContainerStyle}
@@ -628,6 +741,8 @@ const styles = StyleSheet.create({
   buttonTextSecondary: { color: colors.text },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.lg, padding: spacing.xl },
   emptyTitle: { color: colors.textMuted, fontSize: 16, textAlign: "center" },
+  noticeWrap: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
+  noticeText: { color: colors.primary, fontSize: 13, fontWeight: "600" },
   errorNotice: {
     minHeight: 44,
     flexDirection: "row",

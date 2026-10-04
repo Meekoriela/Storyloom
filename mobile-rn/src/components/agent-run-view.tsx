@@ -1,13 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useMemo, useState, type ComponentProps } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { KeyboardAvoidingView as KeyboardAvoider } from "react-native-keyboard-controller";
 import { AdaptiveScroll } from "@/components/ui";
 import { colors, radius, spacing } from "@/theme";
 import type {
@@ -19,27 +21,34 @@ import type {
   AgentTraceEventStatus,
 } from "@/types";
 
-type IconName = ComponentProps<typeof Ionicons>["name"];
-
-function eventIcon(kind: AgentTraceEventKind): IconName {
-  if (kind === "agent") return "people-outline";
-  if (kind === "skill") return "extension-puzzle-outline";
-  if (kind === "question") return "help-circle-outline";
-  if (kind === "consistency") return "sync-outline";
-  return "construct-outline";
+/**
+ * 主干上的一段：竖线 + 接到本行节点的肘线。
+ *
+ * 竖线拆成「上半 + 下半」两截：上半每行都有（把上一行接过来），下半只在后面还有节点时画
+ * —— 一整条会拖到最后一行的底部，看着像还没结束。收口就靠这个条件落在最后一个节点的圆心。
+ */
+function TraceRail({ last }: { last: boolean }) {
+  return (
+    <>
+      <View style={[styles.rail, styles.railHead]} />
+      {last ? null : <View style={[styles.rail, styles.railTail]} />}
+      <View style={styles.elbow} />
+    </>
+  );
 }
 
-function statusIcon(status: AgentTraceEventStatus): IconName {
-  if (status === "completed") return "checkmark-circle";
-  if (status === "error") return "alert-circle";
-  if (status === "waiting") return "time-outline";
-  return "ellipse-outline";
-}
-
-function statusColor(status: AgentTraceEventStatus): string {
-  if (status === "error") return colors.danger;
-  if (status === "waiting") return colors.accent;
-  return colors.primary;
+/**
+ * 主干上的节点，一个标记同时承担"节点"与"状态"：跑着是转圈、完成是实心或空心、失败是叉。
+ *
+ * 行里不再另放图标 —— 在干什么由那一行的文字说（工具名、技能名、提问），
+ * 图形再说一遍就是同一件事写两遍。
+ */
+function TraceNode({ status, lead = false }: { status: AgentTraceEventStatus; lead?: boolean }) {
+  if (status === "running" || status === "waiting") {
+    return <ActivityIndicator size="small" color={colors.primary} />;
+  }
+  if (status === "error") return <Ionicons name="close" size={lead ? 13 : 11} color={colors.danger} />;
+  return <View style={lead ? styles.nodeLead : styles.nodeChild} />;
 }
 
 function runStatus(trace: AgentRunTrace): { label: string; color: string } {
@@ -50,13 +59,10 @@ function runStatus(trace: AgentRunTrace): { label: string; color: string } {
 }
 
 /**
- * 组头摘要：按事件类型聚合成短名。
+ * 事件类型 → 跑动时那一行用的短名。
  *
- * 不写智能体名，也不写「N 个智能体 / N 项工具」这类总数 —— 展开后每行都写着，
- * 组头再写一遍就是重复。总时长也只在这里出现一次。
- *
- * 提问 / 技能 / 子智能体这三类的 title 里带着智能体名，直接拿去聚合等于把名字又
- * 绕回组头一次，所以改用固定短名；工具类的 title 本身就是纯动作名，可以直接用。
+ * 提问 / 技能 / 子智能体这三类的 title 里带着智能体名，直接显示等于把名字绕回来一次，
+ * 所以改用固定短名；工具类的 title 本身就是纯动作名，可以直接用。
  */
 const EVENT_KIND_LABELS: Partial<Record<AgentTraceEventKind, string>> = {
   question: "向你提问",
@@ -85,18 +91,6 @@ function activityLabel(
   return { label: last.short ?? "处理中", color: colors.primary };
 }
 
-function summarizeEvents(trace: AgentRunTrace): string {
-  const counts = new Map<string, number>();
-  for (const event of trace.events) {
-    const name = EVENT_KIND_LABELS[event.kind] ?? event.title.trim();
-    if (!name) continue;
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([name, count]) => (count > 1 ? `${name} ×${count}` : name))
-    .join("、");
-}
-
 function EventPayload({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.payload}>
@@ -106,11 +100,13 @@ function EventPayload({ label, value }: { label: string; value: string }) {
   );
 }
 
-function TraceEventRow({ event, inline = false }: { event: AgentTraceEvent; inline?: boolean }) {
+/** 组内的一条工具 / 提问 / 技能：主干上有自己的节点，节点兼作状态。 */
+function TraceEventRow({ event, last }: { event: AgentTraceEvent; last: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const hasPayload = Boolean(event.input || event.output);
   return (
-    <View style={[styles.event, inline && styles.eventInline]}>
+    <View>
+      <TraceRail last={last} />
       <Pressable
         accessibilityRole={hasPayload ? "button" : undefined}
         accessibilityState={hasPayload ? { expanded } : undefined}
@@ -118,8 +114,8 @@ function TraceEventRow({ event, inline = false }: { event: AgentTraceEvent; inli
         onPress={() => setExpanded((value) => !value)}
         style={styles.eventHeader}
       >
-        <View style={styles.eventKindIcon}>
-          <Ionicons name={eventIcon(event.kind)} size={15} color={colors.textMuted} />
+        <View style={styles.nodeSlotChild}>
+          <TraceNode status={event.status} />
         </View>
         <View style={styles.eventCopy}>
           <View style={styles.eventTitleLine}>
@@ -132,11 +128,6 @@ function TraceEventRow({ event, inline = false }: { event: AgentTraceEvent; inli
           </View>
           {event.detail ? <Text style={styles.eventDetail} numberOfLines={expanded ? undefined : 2}>{event.detail}</Text> : null}
         </View>
-        {event.status === "running" ? (
-          <ActivityIndicator size="small" color={colors.primary} />
-        ) : (
-          <Ionicons name={statusIcon(event.status)} size={19} color={statusColor(event.status)} />
-        )}
         {hasPayload ? (
           <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={17} color={colors.textMuted} />
         ) : null}
@@ -155,17 +146,19 @@ function TraceEventRow({ event, inline = false }: { event: AgentTraceEvent; inli
  * 时间线里的一段思考。
  *
  * 组内的一段，不是独立折叠：没有自己的箭头，展开由外层那个合集统一控制。
- * 「用时」也不在这里写 —— 总时长由组头承担，重复写就是冗余。
+ * 「用时」与「字数」也不在这里写 —— 两样都由组头承担一次，段内再写一遍就是同一件事说两遍。
  */
-export function ReasoningSegment({ text, live }: { text: string; live?: boolean }) {
+export function ReasoningSegment({ text, live, last }: { text: string; live?: boolean; last: boolean }) {
   return (
     <View style={styles.reasoningSegment}>
+      <TraceRail last={last} />
       <View style={styles.reasoningSegmentHeader}>
-        <Ionicons name="bulb-outline" size={15} color={live ? colors.primary : colors.textMuted} />
+        <View style={styles.nodeSlotChild}>
+          <TraceNode status={live ? "running" : "completed"} />
+        </View>
         <Text style={[styles.reasoningSegmentTitle, live && styles.reasoningSegmentTitleLive]}>
           {live ? "思考中" : "思考过程"}
         </Text>
-        <Text style={styles.reasoningSegmentMeta}>{text.trim().length} 字</Text>
       </View>
       <View style={styles.reasoningSegmentBody}>
         <Text selectable style={styles.reasoningSegmentText}>{text}</Text>
@@ -241,31 +234,54 @@ export function buildTraceLines(input: {
  * 此前组头、思考行、每个工具行各带一个箭头，等于三层独立折叠：点开思考行会与
  * 外层争状态，用户看到的是"点了没反应"。收敛成一个折叠后不存在这个问题。
  *
- * 组头只写「状态 + 工具名聚合 + 总时长」三样：智能体名与各类总数一律不进组头，
- * 因为展开后每行都写着，组头再写一遍就是重复。
+ * 组头只留三样：主干上的节点、状态词、用时与合计字数。工具名不进组头 —— 一多就
+ * 会被挤成几个字，而展开后每行都写着它。
+ *
+ * 收起时机：跑着展开（过程要看得到），跑完收起（体量不能一直占屏）。失败除外 ——
+ * 报错必须一眼看见。收起前还要问一句外层列表是不是停在最新（`listAtBottomRef`）：
+ * 用户正往上翻历史时收，高度一变矮就会把他看的位置拽走。
  */
 export function AgentTraceView({
   trace,
   defaultExpanded = false,
   durationSeconds,
+  liveElapsedSeconds,
   inline = false,
   reasoningSegments,
+  listAtBottomRef,
 }: {
   trace: AgentRunTrace;
   defaultExpanded?: boolean;
-  /** 本轮总耗时（秒）：完成态在组头追加一次，组内不再重复。 */
+  /** 本轮总耗时（秒）：完成态在组头写一次，组内不再重复。 */
   durationSeconds?: number;
+  /** 跑动中的已用时（秒）：跑着的时候写「已处理 Ns」，替代助手页另画的那一行。 */
+  liveElapsedSeconds?: number;
   /** 时间线形态：不画卡片外框与底色，组直接铺在消息/实时时间线里。 */
   inline?: boolean;
   /** 全部思考段落，按真实顺序；旧数据可回落到单个 reasoning 文本 */
   reasoningSegments?: Array<{ text: string; seconds?: number; live?: boolean }>;
+  /**
+   * 外层消息列表此刻是否停在最新一条。传 ref 的用意在这里：收起发生在"状态变化那一
+   * 刻"，那时组件不一定重渲染，只有 ref 拿得到当下的真实位置。
+   */
+  listAtBottomRef?: RefObject<boolean>;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded || trace.status === "running");
-  const eventSummary = useMemo(() => summarizeEvents(trace), [trace]);
+  const previousStatus = useRef(trace.status);
 
+  // 只在状态真的发生变化时收，避免覆盖调用方给 defaultExpanded 的显式意图。
   useEffect(() => {
-    if (trace.status === "running") setExpanded(true);
-  }, [trace.status]);
+    const changed = previousStatus.current !== trace.status;
+    previousStatus.current = trace.status;
+    if (trace.status === "running") {
+      setExpanded(true);
+      return;
+    }
+    // 用户正往上翻历史时不动：这一下高度变矮会把他看的位置拽走。停在最新这一端时照旧
+    // 收 —— 那正是收起来最不打扰人的时刻。
+    const atBottom = listAtBottomRef ? listAtBottomRef.current : true;
+    if (changed && trace.status !== "error" && atBottom) setExpanded(false);
+  }, [trace.status, listAtBottomRef]);
 
   const eventsById = useMemo(() => new Map(trace.events.map((event) => [event.id, event])), [trace.events]);
   const lines = useMemo(
@@ -286,44 +302,59 @@ export function AgentTraceView({
 
   const status = useMemo(() => activityLabel(visibleLines, trace), [visibleLines, trace]);
 
+  // 字数合计：收起后只剩组头，展开区还可能被截断，总数只有这里说得清。
+  const reasoningChars = useMemo(
+    () => visibleLines.reduce((sum, line) => sum + (line.kind === "reasoning" ? (line.text ?? "").trim().length : 0), 0),
+    [visibleLines],
+  );
+
+  const nodeStatus: AgentTraceEventStatus =
+    trace.status === "running" ? "running" : trace.status === "error" ? "error" : "completed";
+  const elapsedLabel = trace.status === "running"
+    ? (liveElapsedSeconds ? `已处理 ${liveElapsedSeconds}s` : undefined)
+    : durationSeconds
+      ? `用时 ${durationSeconds}s${reasoningChars ? ` · ${reasoningChars} 字` : ""}`
+      : undefined;
+
   return (
-    <View style={styles.trace}>
+    <View style={[styles.trace, inline && styles.traceInline]}>
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded }}
         accessibilityLabel={expanded ? "收起处理过程" : "展开处理过程"}
         onPress={() => setExpanded((value) => !value)}
-        style={[styles.traceHeader, inline && styles.traceHeaderInline]}
+        style={styles.traceHeader}
       >
-        <View style={styles.traceIcon}>
-          <Ionicons name="git-network-outline" size={15} color={status.color} />
+        {/* 主干从这个节点往下穿，组头只画下半截 —— 上面没有内容。 */}
+        <View style={[styles.rail, styles.railTail]} />
+        <View style={styles.nodeSlotLead}>
+          <TraceNode status={nodeStatus} lead />
         </View>
-        <Text style={[styles.traceStatus, { color: status.color }]}>{status.label}</Text>
-        {eventSummary ? <Text style={styles.traceTools} numberOfLines={1}>{eventSummary}</Text> : null}
-        {durationSeconds ? <Text style={styles.traceElapsed}>用时 {durationSeconds}s</Text> : null}
-        {trace.status === "running" ? <ActivityIndicator size="small" color={colors.primary} /> : null}
+        <Text style={[styles.traceStatus, { color: status.color }]} numberOfLines={1}>{status.label}</Text>
+        <View style={styles.traceSpacer} />
+        {elapsedLabel ? <Text style={styles.traceElapsed}>{elapsedLabel}</Text> : null}
         <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={18} color={colors.textMuted} />
       </Pressable>
       {expanded && visibleLines.length ? (
-        <AdaptiveScroll maxHeight={340} claimGesture>
-          {/* claimGesture：助手消息列表是 inverted FlatList，思考轨迹嵌在列表头里。
-              不抢手势的话，想上下滑看轨迹内容时整条对话会先跟着滑走。 */}
-          <View style={styles.events}>
-            {trace.collaborationRequired ? (
-              <View style={styles.collaborationNotice}>
-                <Ionicons name="people-outline" size={16} color={colors.primary} />
-                <Text style={styles.collaborationText}>此任务可按需调用专业子智能体协作</Text>
-              </View>
-            ) : null}
-            {visibleLines.map((line, index) => {
-              if (line.kind === "reasoning") {
-                return <ReasoningSegment key={`reasoning-${index}`} text={line.text ?? ""} live={line.live} />;
-              }
-              const event = line.id ? eventsById.get(line.id) : undefined;
-              return event ? <TraceEventRow key={event.id} event={event} inline={inline} /> : null;
-            })}
-          </View>
-        </AdaptiveScroll>
+        // 思考与正文连着同一条滚动：这里不再留自己的限高滚动区 —— 框一旦滑到头就会把
+        // 手势抢走，表现成「滑不动、还回弹」。跑动时要贴最新一行由外层列表天然承担
+        // （它本身就是"最新在底"的装法）。
+        <View style={styles.events}>
+          {trace.collaborationRequired ? (
+            <View style={styles.collaborationNotice}>
+              <Ionicons name="people-outline" size={16} color={colors.primary} />
+              <Text style={styles.collaborationText}>此任务可按需调用专业子智能体协作</Text>
+            </View>
+          ) : null}
+          {visibleLines.map((line, index) => {
+            const last = index === visibleLines.length - 1;
+            if (line.kind === "reasoning") {
+              return <ReasoningSegment key={`reasoning-${index}`} text={line.text ?? ""} live={line.live} last={last} />;
+            }
+            const event = line.id ? eventsById.get(line.id) : undefined;
+            return event ? <TraceEventRow key={event.id} event={event} last={last} /> : null;
+          })}
+        </View>
       ) : null}
     </View>
   );
@@ -332,6 +363,15 @@ export function AgentTraceView({
 type QuestionAnswerState = Record<number, string>;
 type CustomAnswerState = Record<number, boolean>;
 
+/**
+ * 提问卡：一屏一题。
+ *
+ * 与写入确认卡同属「AI 停下来等用户」的两种卡，所以形态与口径也一致：浮在屏幕中间的
+ * 卡 + 遮罩；只有按按钮才算回答 —— 点遮罩、系统返回键都不关，否则等于替用户作了决定。
+ *
+ * 一屏一题是刻意的：问题个数没有上限（工具定义就是"问题列表"），一次全列出来必然要在
+ * 卡里滚；一题一屏之后，卡永远只有一屏高。
+ */
 export function AgentQuestionSheet({
   request,
   onSubmit,
@@ -343,147 +383,170 @@ export function AgentQuestionSheet({
 }) {
   const [answers, setAnswers] = useState<QuestionAnswerState>({});
   const [customAnswers, setCustomAnswers] = useState<CustomAnswerState>({});
+  const [step, setStep] = useState(0);
 
   useEffect(() => {
     setAnswers({});
     setCustomAnswers({});
+    setStep(0);
   }, [request?.id]);
 
   if (!request) return null;
 
-  const canSubmit = request.questions.every((_, index) => Boolean(answers[index]?.trim()));
+  const total = request.questions.length;
+  const index = Math.min(step, total - 1);
+  const question = request.questions[index];
+  const isLast = index >= total - 1;
+  const answered = (at: number) => Boolean(answers[at]?.trim());
+  const canSubmit = request.questions.every((_, at) => answered(at));
   const submit = () => {
     if (!canSubmit) return;
-    onSubmit(request.questions.map((question, index) => ({
-      question: question.title,
-      answer: answers[index].trim(),
+    onSubmit(request.questions.map((entry, at) => ({
+      question: entry.title,
+      answer: answers[at].trim(),
     })));
   };
 
   return (
-    <View style={styles.questionBackdrop}>
+    <Modal visible transparent animationType="fade" onRequestClose={() => { /* 返回键不算回答，卡保持等待 */ }}>
+      <KeyboardAvoider style={styles.questionBackdrop} behavior="height" automaticOffset>
         <View style={styles.questionSheet}>
           <View style={styles.questionHeader}>
             <View style={styles.questionHeaderIcon}>
               <Ionicons name="help-circle-outline" size={21} color={colors.primary} />
             </View>
             <View style={styles.questionHeaderCopy}>
-              <Text style={styles.questionSheetTitle}>{request.agentName} 需要你的选择 · {request.questions.length} 个问题</Text>
+              <Text style={styles.questionSheetTitle}>{request.agentName} 需要你的选择</Text>
+              <Text style={styles.questionProgress}>第 {index + 1} / {total} 题</Text>
             </View>
             <Pressable accessibilityLabel="稍后回答" onPress={onCancel} style={styles.closeButton}>
               <Ionicons name="close" size={24} color={colors.textMuted} />
             </Pressable>
           </View>
-          {/* claimGesture 同上：提问卡嵌在倒置列表里，不抢手势则滑动被外层吃掉。 */}
-          <AdaptiveScroll maxHeight={300} contentContainerStyle={styles.questions} keyboardShouldPersistTaps="handled" claimGesture>
-            {request.questions.map((question, questionIndex) => (
-              <View key={`${request.id}-${questionIndex}`} style={styles.question}>
-                <Text style={styles.questionIndex}>问题 {questionIndex + 1}</Text>
-                <Text style={styles.questionTitle}>{question.title}</Text>
-                {question.description ? <Text style={styles.questionDescription}>{question.description}</Text> : null}
-                <View accessibilityRole="radiogroup" style={styles.options}>
-                  {question.options.map((option, optionIndex) => {
-                    const selected = !customAnswers[questionIndex] && answers[questionIndex] === option.label;
-                    return (
-                      <Pressable
-                        key={`${option.label}-${optionIndex}`}
-                        accessibilityRole="radio"
-                        accessibilityState={{ checked: selected }}
-                        onPress={() => {
-                          setCustomAnswers((current) => ({ ...current, [questionIndex]: false }));
-                          setAnswers((current) => ({ ...current, [questionIndex]: option.label }));
-                        }}
-                        style={[styles.option, selected && styles.optionSelected]}
-                      >
-                        <Ionicons
-                          name={selected ? "radio-button-on" : "radio-button-off"}
-                          size={20}
-                          color={selected ? colors.primary : colors.textMuted}
-                        />
-                        <View style={styles.optionCopy}>
-                          <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>{option.label}</Text>
-                          {option.description ? <Text style={styles.optionDescription}>{option.description}</Text> : null}
-                        </View>
-                      </Pressable>
-                    );
-                  })}
-                  <Pressable
-                    accessibilityRole="radio"
-                    accessibilityState={{ checked: Boolean(customAnswers[questionIndex]) }}
-                    onPress={() => {
-                      setCustomAnswers((current) => ({ ...current, [questionIndex]: true }));
-                      setAnswers((current) => ({ ...current, [questionIndex]: "" }));
-                    }}
-                    style={[styles.option, customAnswers[questionIndex] && styles.optionSelected]}
-                  >
-                    <Ionicons
-                      name={customAnswers[questionIndex] ? "radio-button-on" : "radio-button-off"}
-                      size={20}
-                      color={customAnswers[questionIndex] ? colors.primary : colors.textMuted}
-                    />
-                    <Text style={[styles.optionLabel, customAnswers[questionIndex] && styles.optionLabelSelected]}>
-                      自行输入答案
-                    </Text>
-                  </Pressable>
-                  {customAnswers[questionIndex] ? (
-                    <TextInput
-                      autoFocus
-                      multiline
-                      maxLength={1200}
-                      onChangeText={(value) => setAnswers((current) => ({ ...current, [questionIndex]: value }))}
-                      placeholder="输入你的决定或补充"
-                      placeholderTextColor={colors.textMuted}
-                      style={styles.customInput}
-                      value={answers[questionIndex] ?? ""}
-                    />
-                  ) : null}
-                </View>
+          <AdaptiveScroll maxHeight={320} contentContainerStyle={styles.questions} keyboardShouldPersistTaps="handled">
+            <View style={styles.question}>
+              <Text style={styles.questionIndex}>问题 {index + 1}</Text>
+              <Text style={styles.questionTitle}>{question.title}</Text>
+              {question.description ? <Text style={styles.questionDescription}>{question.description}</Text> : null}
+              <View accessibilityRole="radiogroup" style={styles.options}>
+                {question.options.map((option, optionIndex) => {
+                  const selected = !customAnswers[index] && answers[index] === option.label;
+                  return (
+                    <Pressable
+                      key={`${option.label}-${optionIndex}`}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: selected }}
+                      onPress={() => {
+                        setCustomAnswers((current) => ({ ...current, [index]: false }));
+                        setAnswers((current) => ({ ...current, [index]: option.label }));
+                      }}
+                      style={[styles.option, selected && styles.optionSelected]}
+                    >
+                      <Ionicons
+                        name={selected ? "radio-button-on" : "radio-button-off"}
+                        size={20}
+                        color={selected ? colors.primary : colors.textMuted}
+                      />
+                      <View style={styles.optionCopy}>
+                        <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>{option.label}</Text>
+                        {option.description ? <Text style={styles.optionDescription}>{option.description}</Text> : null}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: Boolean(customAnswers[index]) }}
+                  onPress={() => {
+                    setCustomAnswers((current) => ({ ...current, [index]: true }));
+                    setAnswers((current) => ({ ...current, [index]: "" }));
+                  }}
+                  style={[styles.option, customAnswers[index] && styles.optionSelected]}
+                >
+                  <Ionicons
+                    name={customAnswers[index] ? "radio-button-on" : "radio-button-off"}
+                    size={20}
+                    color={customAnswers[index] ? colors.primary : colors.textMuted}
+                  />
+                  <Text style={[styles.optionLabel, customAnswers[index] && styles.optionLabelSelected]}>
+                    自行输入答案
+                  </Text>
+                </Pressable>
+                {customAnswers[index] ? (
+                  <TextInput
+                    autoFocus
+                    multiline
+                    maxLength={1200}
+                    onChangeText={(value) => setAnswers((current) => ({ ...current, [index]: value }))}
+                    placeholder="输入你的决定或补充"
+                    placeholderTextColor={colors.textMuted}
+                    style={styles.customInput}
+                    value={answers[index] ?? ""}
+                  />
+                ) : null}
               </View>
-            ))}
+            </View>
           </AdaptiveScroll>
           <View style={styles.questionActions}>
             <Pressable accessibilityRole="button" onPress={onCancel} style={styles.questionButtonSecondary}>
               <Text style={styles.questionButtonSecondaryText}>稍后再说</Text>
             </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled: !canSubmit }}
-              disabled={!canSubmit}
-              onPress={submit}
-              style={[styles.questionButtonPrimary, !canSubmit && styles.questionButtonDisabled]}
-            >
-              <Text style={styles.questionButtonPrimaryText}>提交回答</Text>
-            </Pressable>
+            {isLast ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !canSubmit }}
+                disabled={!canSubmit}
+                onPress={submit}
+                style={[styles.questionButtonPrimary, !canSubmit && styles.questionButtonDisabled]}
+              >
+                <Text style={styles.questionButtonPrimaryText}>提交回答</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !answered(index) }}
+                disabled={!answered(index)}
+                onPress={() => setStep(index + 1)}
+                style={[styles.questionButtonPrimary, !answered(index) && styles.questionButtonDisabled]}
+              >
+                <Text style={styles.questionButtonPrimaryText}>下一题</Text>
+              </Pressable>
+            )}
           </View>
         </View>
-    </View>
+      </KeyboardAvoider>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  // 组根：一个组一条线，不画外框与底色，状态行与后续轨迹直接落在消息/实时时间线上。
+  // 组根：一个组一条主干线，不画外框与底色，状态行与后续轨迹直接落在消息/实时时间线上。
   trace: { alignSelf: "flex-start", flexShrink: 1, maxWidth: "88%" },
   traceInline: { borderWidth: 0, borderRadius: 0, backgroundColor: "transparent" },
-  traceHeaderInline: { paddingHorizontal: 0 },
+  // 主干：一条竖线贯穿整轮，节点挂在干上。位置由两级缩进决定 —— 组头节点圆心在 +13、
+  // 子行节点圆心在 +33（往里一档 20）。上半截每行都有；下半截由 TraceRail 按"后面还有
+  // 没有节点"决定，主干因此正好收在最后一个节点的圆心，不会拖到最后一行内容的底部。
+  rail: { position: "absolute", left: 13, width: StyleSheet.hairlineWidth, backgroundColor: colors.border },
+  railHead: { top: 0, height: 21 },
+  railTail: { top: 21, bottom: 0 },
+  elbow: { position: "absolute", left: 13, top: 20.5, width: 20, height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
+  // 组头节点（实心、稍大）与子行节点（空心、稍小）：一个标记兼作节点与状态。
+  nodeSlotLead: { width: 14, alignItems: "center", justifyContent: "center" },
+  nodeLead: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.primary },
+  nodeSlotChild: { width: 10, alignItems: "center", justifyContent: "center" },
+  nodeChild: { width: 10, height: 10, borderRadius: 5, borderWidth: 1.5, borderColor: colors.textMuted },
+  // 组头：节点圆心要落在主干上，所以左侧内边距 = 圆心 13 − 半径 7。
   traceHeader: {
     minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
+    paddingLeft: 6,
     paddingVertical: spacing.xs,
   },
-  traceIcon: {
-    width: 26,
-    height: 26,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: radius.sm,
-    backgroundColor: colors.surfaceMuted,
-  },
-  traceStatus: { fontSize: 13, fontWeight: "700" },
-  // 组头的工具名聚合：flexShrink 让它可压缩，状态与时长不被挤掉。
-  traceTools: { flexShrink: 1, minWidth: 0, color: colors.textMuted, fontSize: 12 },
-  traceElapsed: { color: colors.textMuted, fontSize: 12 },
+  traceStatus: { flexShrink: 0, fontSize: 13, fontWeight: "700" },
+  traceSpacer: { flex: 1 },
+  traceElapsed: { flexShrink: 0, color: colors.textMuted, fontSize: 12 },
   events: {},
   collaborationNotice: {
     minHeight: 34,
@@ -494,40 +557,37 @@ const styles = StyleSheet.create({
     backgroundColor: "#E8F2EE",
   },
   collaborationText: { flex: 1, color: colors.primary, fontSize: 12, fontWeight: "600" },
-  // 思考段：组内的一段，没有自己的折叠箭头；正文缩进一档并加左侧细竖线。
+  // 思考段：组内的一段，没有自己的折叠箭头；正文与子行文字同列，不再自成一块。
   reasoningSegment: { paddingHorizontal: 0 },
-  reasoningSegmentHeader: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 34 },
-  reasoningSegmentTitle: { color: colors.textMuted, fontSize: 13 },
+  reasoningSegmentHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 42, paddingLeft: 28 },
+  reasoningSegmentTitle: { color: colors.text, fontSize: 13 },
   reasoningSegmentTitleLive: { color: colors.primary },
-  reasoningSegmentMeta: { color: colors.textMuted, fontSize: 12 },
   reasoningSegmentText: { color: colors.textMuted, fontSize: 13, lineHeight: 20 },
-  reasoningSegmentBody: { marginTop: spacing.xs, marginLeft: 5, paddingLeft: spacing.sm, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.border },
-  event: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  eventInline: { borderTopWidth: 0, borderTopColor: "transparent" },
+  reasoningSegmentBody: { marginTop: spacing.xs, paddingLeft: 46 },
+  // 子行：同样只有一圈一行，行高与组头一致；层级靠缩进与字体分，不靠尺寸。
   eventHeader: {
     minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
+    paddingLeft: 28,
     paddingVertical: spacing.xs,
   },
-  eventKindIcon: { width: 22, alignItems: "center" },
   eventCopy: { flexShrink: 1, minWidth: 0 },
   eventTitleLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  eventTitle: { flexShrink: 1, color: colors.text, fontSize: 13, fontWeight: "700" },
+  eventTitle: { flexShrink: 1, color: colors.text, fontSize: 13 },
   agentName: { flexShrink: 1, color: colors.textMuted, fontSize: 11 },
   eventDetail: { marginTop: 3, color: colors.textMuted, fontSize: 12, lineHeight: 18 },
   payloads: { gap: spacing.xs, paddingHorizontal: spacing.sm, paddingBottom: spacing.sm },
   payload: { gap: spacing.xs, padding: spacing.xs, borderRadius: radius.sm, backgroundColor: colors.surfaceMuted },
   payloadLabel: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
   payloadText: { color: colors.text, fontSize: 12, lineHeight: 18 },
-  questionBackdrop: { width: "100%", maxWidth: "88%", alignSelf: "flex-start" },
+  // 提问卡与写入确认卡同一套：浮在屏幕中间 + 遮罩 0.48，数值与全项目的居中卡一致。
+  questionBackdrop: { flex: 1, justifyContent: "center", padding: spacing.lg, backgroundColor: colors.overlay },
   questionSheet: {
-    maxHeight: 400,
-    borderWidth: 1,
-    borderColor: colors.border,
+    maxHeight: "80%",
     borderRadius: radius.md,
-    backgroundColor: "#EFF3F0",
+    backgroundColor: colors.background,
     overflow: "hidden",
   },
   questionHeader: {
@@ -535,7 +595,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
-    paddingLeft: spacing.md,
+    paddingLeft: spacing.lg,
     paddingRight: spacing.xs,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
@@ -549,9 +609,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceMuted,
   },
   questionHeaderCopy: { flex: 1, minWidth: 0 },
-  questionSheetTitle: { color: colors.text, fontSize: 14, fontWeight: "700" },
+  questionSheetTitle: { color: colors.text, fontSize: 18, fontWeight: "700" },
+  questionProgress: { marginTop: 2, color: colors.textMuted, fontSize: 12 },
   closeButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  questions: { padding: spacing.md, paddingBottom: spacing.lg, gap: spacing.lg },
+  questions: { padding: spacing.lg, paddingBottom: spacing.lg, gap: spacing.lg },
   question: { gap: spacing.sm },
   questionIndex: { color: colors.primary, fontSize: 11, fontWeight: "700" },
   questionTitle: { color: colors.text, fontSize: 14, fontWeight: "700", lineHeight: 21 },
@@ -592,9 +653,9 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     alignItems: "center",
     gap: spacing.sm,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.lg,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
   },
