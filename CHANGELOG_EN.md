@@ -8,6 +8,48 @@ Important changes to this project. Format based on [Keep a Changelog](https://ke
 
 ---
 
+## [0.1.39] — 2026-10-04
+
+### Added
+
+- **The assistant's run is now a tree**: one trunk runs the length of the round with nodes hanging off it (spinning while running, filled or hollow when done, a cross on failure), and the header is one row — "state + elapsed · total characters". Expanded, reasoning segments, tools, skills and questions sit in one line in true order, indented in two levels with reasoning body text aligned to the child-row text. Before, the three row types each had their own height, icon size and gap and were separated by hairlines, with the vertical rule hugging only the reasoning body, which read as a stack of bars rather than a line. It auto-collapses when the round finishes and stays open on failure; collapsed, the header row is the round's summary
+- **Write confirmation and questions now float in the middle of the screen**: both cards used to sit in the conversation flow, sharing space with the reasoning trace and the streaming reply. They now float centred over a dimmed backdrop, using the project's centred-card values (48% scrim, 24 padding, 14 radius, 18 title)
+- **One question per screen**: the card header reads "question N / M", you tap "next" after answering, and only the last question shows "submit". The number of questions has no upper bound (the tool schema literally says "a list of questions"), and one-per-screen keeps the card exactly one screen tall; picking "type my own answer" lifts the card with the keyboard
+- **New "Request timeout" page in settings**: renamed from "Connection & advanced" (that page had neither connection nor advanced entries, so the name was wrong). It shows the current value and offers "save / restore default", validating 10000–300000 ms before saving
+- **The add-provider wizard gained proper buttons**: the three step markers are now indicators only and can no longer be tapped freely (skipping left the form empty); step ① has "next" at the bottom, step ② "back / skip and use defaults", step ③ "back / save provider", and saving returns to the model page with a confirmation at the top
+- **"Fetch models" now writes on tick**: ticking a model writes it to the database, the panel stays open for more ticks, the row shows a spinner then a check, and ticking twice does not create duplicates; the "add model" row now fetches that provider's list before opening the panel
+- **Bottom navigation is icons only**: the four labels are gone and the bar height drops from 58 to 44, with icons centred; `title` is kept for screen readers
+- **Uniform press-scale on small controls**: 64 icon buttons, round buttons and chips now scale to 0.94 and spring back, sharing the bottom navigation's parameters. List rows and cards keep the pressed-background feedback — scaling would make a whole row wobble
+
+### Fixed
+
+- **Books did not sit on the plank**: the plank is drawn as a single layer behind the books again, with the book's foot resting just above the plank's top edge so the plank's thickness shows fully below. Before, the plank was drawn after the book and overlapped its foot, hiding the book's bottom edge and killing the sense of depth
+- **The fourth book in the grid was cut off at the screen edge**: the cell-width formula was missing the shelf row's and book area's horizontal padding (lost when the formula was rewritten). Restored, each cell is 82 → 75 dp, four books centred with 20 dp on each side
+- **Spine view fixed at five per row, leaving nearly half the row empty**: rows now pack by actual spine width (8–10 per row), and the title under each spine follows that spine's own width instead of being spread evenly across the row
+- **Drawer type was too large**: 14 font sizes across the three drawers each drop one step (work rows 16 → 15, volume/chapter/conversation rows 15 → 14, inline actions 15 → 14, counts 12 → 11, title 18 → 17, "temporary" 10 → 9) and icons one size; row heights and tap targets are unchanged
+- **A stutter when switching works or tapping "Writing" / "Assistant"**: the full-page early return while loading is narrowed to "only on first entry, before any data exists". Any write bumped `revision` and unloaded the whole page tree, resetting the drawers', editor's and sheets' internal state along with it
+- **A blank strip under bottom sheets**: 8 of the 11 sheets applied their bottom padding twice (24 dp from the sheet shell plus 24–32 dp from the content container); the caller's copy is gone and every sheet bottoms out at 24 dp
+- **Skill detail text ran to both screen edges**: the 16 dp side padding is back (the sheet unification batch restored the bottom but missed the sides); the writing page's "export project" sheet also went from 8 to 16 dp of horizontal padding
+- **The rules / skills / agents rows had lost their border and rounded corners**: the bordered style is restored, and the note now records that the 12 dp left padding belongs with that border (it was left over from the first bordered-card version and never tidied when the border was removed)
+- **Two hairlines on the "Optional content" page, and a load-status row covering only two items**: that row is deleted (the two local-model cards carry their own installed / not-installed badges, so nothing is lost) and both local-model cards move back under the "Local models" heading — they used to render under the "Fonts & skill packs" heading
+- **System dialogs across settings**: all 47 are gone — 11 completion notices became a toast under the header (auto-dismissing after 2 s), 15 errors became inline red notices, 17 destructive confirmations became centred cards (destructive button in red), and 3 export-format pickers became a three-button stacked card; one assistant-page tool-approval dialog that could never appear (its only call site always supplies the card) was removed
+- **Character avatars failed no matter how many times you picked a new image**: the file copy is asynchronous but nobody waited for it, and the failure was swallowed by an empty catch, so the preview pointed at a path that did not exist and the UI looked unresponsive. The wait is added, thumbnailing uses the new file API (the two methods it used previously throw at runtime in the current SDK), the extension is sanitised, and failures show red text inside the dialog. For contrast, work covers always worked because they await a database write after the copy, which incidentally covered it
+- **Models could not be added or switched**: picking one from the "fetch models" list only filled the form without writing to the database, and the "add model" row did not fetch the list first (so the panel showed the previous provider's models). The provider row's second line now shows only the host name (one entry used to be truncated while the other was complete), and preset names are unified ("Zhipu GLM" → "Zhipu")
+- **Free models saved but never appeared on the model page**: saving did not refresh the model page and each save created another provider with the same name. Saving now returns to the model page, sets the model as current and reuses an existing provider with the same endpoint
+- **The back gesture in the wizard jumped straight back to the settings home**: it now has the "back to model page" level, matching the top-left back button
+- **Scrolling down inside an expanded reasoning trace bounced**: the trace no longer carries its own height-capped scroll box, so reasoning and prose scroll as one; with the write and question cards floating mid-screen they no longer fight the message list for the gesture either
+- **Auto-collapse could yank you while you were reading history**: it now checks whether the list is at the newest end first, and does not collapse if you are not
+
+### Trade-offs
+
+- **Why the reasoning area lost its own scroll box**: the 340 dp cap existed so that long reasoning could not push the answer off screen, at the cost of grabbing the gesture even at the end of its scroll (which reads as "won't scroll, and bounces"). Both approaches exist in the field: Cherry Studio and assistant-ui cap and scroll the reasoning area (the former explicitly sets `overscroll-contain` to stop scrolling from escaping to the outer list), while vercel's ai-elements, prompt-kit, open-webui and lobe-chat do not cap it — reasoning and prose share one scroll, as on DeepSeek's web app. We took the latter: reasoning and prose belong together, and the outer list owns the scroll. The general defect — claiming a gesture without checking remaining scroll room — is fixed too: any nested capped scroller now claims only while it has room in that direction and hands over at the end
+- **One question per screen is a behaviour change**: previously all questions were listed and submitted together; now you tap through them, in exchange for a card whose height does not grow with the number of questions
+- **These two cards ignore taps on the scrim and the system back key**, unlike the app-wide "tap outside to cancel" convention: writing and answering are decided by buttons only (rejecting is really rejecting), so dismissing by tapping outside would press reject for you
+- **Bottom padding is kept once, on the sheet shell**: that 24 dp is the gap between the panel and the screen's bottom edge (without it the last row touches the bottom and gets covered by the gesture bar); the caller's copy was the duplicate
+- **Press-scaling applies to small controls only**: list rows and cards keep the pressed-background feedback
+
+---
+
 ## [0.1.38] — 2026-10-03
 
 ### Added
