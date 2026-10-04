@@ -483,10 +483,17 @@ function coverColor(title: string): string {
       directory.create({ intermediates: true, idempotent: true });
       const extension = (picked.fileName?.split(".").pop() ?? "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
       target = new File(directory, `${project.id}-${Date.now()}.${extension}`);
-      new File(picked.uri).copy(target);
-      try {
-        await downsampleToFile(target.uri, 1080);
-      } catch {}
+      await new File(picked.uri).copy(target);
+      // 降采样只是省内存：压成功了就换用压小的那份，失败继续用原图，两种都不作提示。
+      const resizedUri = await downsampleToFile(target.uri, 1080);
+      if (resizedUri) {
+        try {
+          if (target.exists) target.delete();
+        } catch {
+          // 原图没删掉只是多占一点空间，不影响显示。
+        }
+        target = new File(resizedUri);
+      }
       void appendBreadcrumb(`封面已保存（降采样）`);
     } catch (copyError) {
       setError(`图片已选中，但写入本地目录失败：${copyError instanceof Error ? copyError.message : String(copyError)}`);
