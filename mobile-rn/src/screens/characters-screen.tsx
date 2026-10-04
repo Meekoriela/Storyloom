@@ -59,6 +59,8 @@ export function CharactersScreen() {
   const [description, setDescription] = useState("");
   const [isFavorited, setIsFavorited] = useState(false);
   const [imagePath, setImagePath] = useState("");
+  // 「角色设定」默认限高，点标签行右边的箭头摊平；内容短时看不出区别，长内容时才起作用。
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [notice, showNotice] = useNotice();
 
@@ -93,6 +95,7 @@ export function CharactersScreen() {
     setDescription(character?.description ?? "");
     setImagePath(character?.imagePath ?? "");
     setIsFavorited(character?.isFavorited ?? false);
+    setDescriptionExpanded(false);
     setEditorVisible(true);
   };
 
@@ -135,13 +138,18 @@ export function CharactersScreen() {
       // 每次都用新文件名：图片组件按 URI 缓存，同名会导致「换了图界面没反应」。
       const target = new File(directory, `${createId()}.${extension}`);
       // copy 是异步的，必须等它落盘。不等的话下面拿到的是一个还不存在的路径，
-      // 预览与保存都会失败，而失败会被下面的降采样空 catch 吃掉、界面上毫无提示。
+      // 预览与保存都会失败。
       await new File(asset.uri).copy(target);
-      // 降采样只是省内存，失败不影响图片本身，不作提示。
-      try {
-        await downsampleToFile(target.uri, 512);
-      } catch {}
-      setImagePath(target.uri);
+      // 降采样只是省内存：压成功了就换用压小的那份，失败继续用原图，两种都不作提示。
+      const resizedUri = await downsampleToFile(target.uri, 512);
+      if (resizedUri) {
+        try {
+          if (target.exists) target.delete();
+        } catch {
+          // 原图没删掉只是多占一点空间，不影响显示。
+        }
+      }
+      setImagePath(resizedUri ?? target.uri);
     } catch (pickError) {
       setError(pickError instanceof Error ? pickError.message : String(pickError));
     }
@@ -299,6 +307,7 @@ export function CharactersScreen() {
               </ScalePress>
             </View>
             <KeyboardAwareScrollView
+              style={styles.formScroll}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator={false}
@@ -323,16 +332,22 @@ export function CharactersScreen() {
                   {imagePath ? <Button label="移除图片" variant="secondary" onPress={() => setImagePath("")} /> : null}
                 </View>
               </View>
-              <Field label="角色设定" value={description} onChangeText={setDescription} multiline textAlignVertical="top" style={styles.descriptionInput} placeholder="外貌、性格、经历、关系和写作注意事项" />
+              <View style={styles.longInputWrap}>
+                <Field label="角色设定" value={description} onChangeText={setDescription} multiline textAlignVertical="top" style={[styles.descriptionInput, !descriptionExpanded && styles.longInputClamp]} placeholder="外貌、性格、经历、关系和写作注意事项" />
+                <ScalePress accessibilityLabel={descriptionExpanded ? "收起角色设定" : "展开角色设定"} onPress={() => setDescriptionExpanded((value) => !value)} hitSlop={8} style={styles.longInputToggle}>
+                  <Ionicons name={descriptionExpanded ? "chevron-up" : "chevron-down"} size={18} color={colors.textMuted} />
+                </ScalePress>
+              </View>
               <View style={styles.switchRow}>
                 <Text style={styles.switchLabel}>收藏角色</Text>
                 <Switch value={isFavorited} onValueChange={setIsFavorited} trackColor={{ false: colors.border, true: colors.primary }} />
               </View>
-              <View style={styles.modalActions}>
-                <Button label="取消" variant="secondary" onPress={() => setEditorVisible(false)} />
-                <Button label="保存" onPress={() => void submit()} disabled={!name.trim()} loading={saving} />
-              </View>
             </KeyboardAwareScrollView>
+            {/* 取消 / 保存钉在弹层底部：设定框再长也不会把它顶出可视区。 */}
+            <View style={styles.modalActions}>
+              <Button label="取消" variant="secondary" onPress={() => setEditorVisible(false)} />
+              <Button label="保存" onPress={() => void submit()} disabled={!name.trim()} loading={saving} />
+            </View>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -387,9 +402,15 @@ const styles = StyleSheet.create({
   modalBody: { maxHeight: "80%", padding: spacing.lg, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet, backgroundColor: colors.background },
   modalHeader: { minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   modalTitle: { color: colors.text, fontSize: 20, fontWeight: "700" },
+  // 面板限高 80%，中间这层要能收缩，里面的滚动区才不会被内容撑满。
+  formScroll: { flexShrink: 1 },
   form: { gap: spacing.lg, paddingVertical: spacing.sm },
   descriptionInput: { minHeight: 180 },
+  // 收起态给个上限，长设定不再一路长高把保存键顶出去；摊开后不限高，由弹层滚动承接。
+  longInputClamp: { maxHeight: 320 },
+  longInputWrap: { position: "relative" },
+  longInputToggle: { position: "absolute", top: 0, right: 0, width: 32, height: 24, alignItems: "center", justifyContent: "center" },
   switchRow: { minHeight: 50, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   switchLabel: { color: colors.text, fontSize: 15, fontWeight: "600" },
-  modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm },
+  modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm, marginTop: spacing.md },
 });

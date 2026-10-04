@@ -91,6 +91,8 @@ export function StyleLibraryScreen() {
   const [editingSource, setEditingSource] = useState(false);
   const [editingAuthorGuide, setEditingAuthorGuide] = useState(false);
   const [authorGuide, setAuthorGuide] = useState("");
+  // 「作者文风指南」默认限高，点标签行右边的箭头摊平；指南通常很长，摊开交给弹层滚动。
+  const [guideExpanded, setGuideExpanded] = useState(false);
   /** 章节 id → 章节名，用来把作者文风的来源章节显示成人能读的名字。 */
   const [chapterTitles, setChapterTitles] = useState<Map<string, string>>(new Map());
 
@@ -516,17 +518,28 @@ export function StyleLibraryScreen() {
       >
             <PlainScrollView style={styles.sheetScroll} contentContainerStyle={styles.profileContent}>
               {selectedProfile?.kind === "author" && editingAuthorGuide ? (
-                <Field label="作者文风指南" value={authorGuide} onChangeText={setAuthorGuide} multiline style={styles.guideInput} maxLength={100000} />
+                <View style={styles.longInputWrap}>
+                  <Field label="作者文风指南" value={authorGuide} onChangeText={setAuthorGuide} multiline textAlignVertical="top" style={[styles.guideInput, !guideExpanded && styles.longInputClamp]} maxLength={100000} />
+                  <ScalePress accessibilityLabel={guideExpanded ? "收起指南" : "展开指南"} onPress={() => setGuideExpanded((value) => !value)} hitSlop={8} style={styles.longInputToggle}>
+                    <Ionicons name={guideExpanded ? "chevron-up" : "chevron-down"} size={18} color={colors.textMuted} />
+                  </ScalePress>
+                </View>
               ) : (
                 <Text selectable style={styles.guideText}>{selectedProfile?.guide}</Text>
               )}
+            </PlainScrollView>
+            {/* 按钮钉在弹层底部：指南再长也不会把它顶出可视区。 */}
+            <View style={styles.profileActionsBar}>
               <View style={styles.inlineActions}>
                 {selectedProfile?.kind === "author" ? (
                   <Button
                     label={editingAuthorGuide ? "保存新版本" : "编辑指南"}
                     onPress={() => {
                       if (editingAuthorGuide) void saveAuthor();
-                      else setEditingAuthorGuide(true);
+                      else {
+                        setGuideExpanded(false);
+                        setEditingAuthorGuide(true);
+                      }
                     }}
                     disabled={busy || (editingAuthorGuide && !authorGuide.trim())}
                     loading={busy}
@@ -542,7 +555,7 @@ export function StyleLibraryScreen() {
                   <Ionicons name="trash-outline" size={21} color={colors.danger} />
                 </ScalePress>
               </View>
-            </PlainScrollView>
+            </View>
         </BottomSheet>
 
       {/* 先把卡收掉再执行动作：动作里可能开别的弹层，卡片留在上面会挡住新开的那一层。 */}
@@ -628,7 +641,8 @@ const styles = StyleSheet.create({
   sourceCopy: { flex: 1, minWidth: 0, gap: 3 },
   sourceTitle: { color: colors.text, fontSize: 16, fontWeight: "700" },
   sourceMeta: { color: colors.textMuted, fontSize: 12 },
-  profileRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: 8, paddingLeft: spacing.md},
+  // 左侧 12dp 内边距与这套边框是一套，要动就连内边距一起理。
+  profileRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm, paddingLeft: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.surface },
   profileRowInset: { marginHorizontal: spacing.lg },
   profileRowActive: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
   profileMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm },
@@ -656,4 +670,10 @@ const styles = StyleSheet.create({
   emptyHint: { color: colors.textMuted, fontSize: 14, lineHeight: 21, paddingVertical: spacing.md },
   guideText: { color: colors.text, fontSize: 14, lineHeight: 21 },
   guideInput: { minHeight: 300 },
+  // 收起态给个上限，长指南不再一路长高把按钮顶出去；摊开后不限高，由弹层滚动承接。
+  longInputClamp: { maxHeight: 320 },
+  longInputWrap: { position: "relative" },
+  longInputToggle: { position: "absolute", top: 0, right: 0, width: 32, height: 24, alignItems: "center", justifyContent: "center" },
+  // 按钮行已挪出滚动区，底部留白改由它自己承担（另一处 inlineActions 不受影响）。
+  profileActionsBar: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, marginTop: spacing.sm },
 });

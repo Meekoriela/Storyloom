@@ -77,8 +77,9 @@ function MainTabs() {
             borderTopColor: colors.border,
             // 44 是项目里按钮的最小可点高度，整栏不低于它，按起来不会比原来更难按。
             height: 44 + insets.bottom,
-            paddingBottom: Math.max(insets.bottom, 5),
-            paddingTop: 6,
+            // 图标原来压着屏幕下沿：底部留白由 5 提到 12，图标整体上移；栏高仍是去文字后那版。
+            paddingBottom: Math.max(insets.bottom, 12),
+            paddingTop: 2,
           },
           tabBarHideOnKeyboard: true,
           tabBarButton: (props) => <TabPressButton {...props} />,

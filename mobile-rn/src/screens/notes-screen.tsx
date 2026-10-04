@@ -67,6 +67,8 @@ export function NotesScreen() {
   const [creatingIn, setCreatingIn] = useState<Group | null>(null);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  // 「内容」默认限高，点标签行右边的箭头摊平；笔记正文通常很长，摊开交给弹层滚动。
+  const [contentExpanded, setContentExpanded] = useState(false);
   const [movingNote, setMovingNote] = useState<Note | null>(null);
   const [exporting, setExporting] = useState(false);
   const [formatPickerVisible, setFormatPickerVisible] = useState(false);
@@ -146,6 +148,7 @@ export function NotesScreen() {
     setEditing(null);
     setTitle("");
     setContent("");
+    setContentExpanded(false);
   };
 
   /** 导出本作品全部笔记：Markdown（分层）/ TXT / JSON 三种格式，先选格式再导出。 */
@@ -174,6 +177,7 @@ export function NotesScreen() {
     setCreatingIn(null);
     setTitle(note.title);
     setContent(note.content);
+    setContentExpanded(false);
   };
 
   const closeEditor = () => {
@@ -357,16 +361,22 @@ export function NotesScreen() {
             </View>
             <PlainScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent} keyboardShouldPersistTaps="handled">
               <Field label="标题" value={title} onChangeText={setTitle} autoFocus={!editing} maxLength={200} />
-              <Field label="内容" value={content} onChangeText={setContent} multiline style={styles.contentInput} maxLength={100000} />
-              <View style={styles.inlineActions}>
-                <Button label="保存" onPress={() => void save()} disabled={busy || !title.trim()} loading={busy} />
-                {editing ? (
-                  <ScalePress accessibilityLabel="删除笔记" onPress={() => confirmDelete(editing)} style={styles.secondaryIconAction}>
-                    <Ionicons name="trash-outline" size={21} color={colors.danger} />
-                  </ScalePress>
-                ) : null}
+              <View style={styles.longInputWrap}>
+                <Field label="内容" value={content} onChangeText={setContent} multiline textAlignVertical="top" style={[styles.contentInput, !contentExpanded && styles.longInputClamp]} maxLength={100000} />
+                <ScalePress accessibilityLabel={contentExpanded ? "收起内容" : "展开内容"} onPress={() => setContentExpanded((value) => !value)} hitSlop={8} style={styles.longInputToggle}>
+                  <Ionicons name={contentExpanded ? "chevron-up" : "chevron-down"} size={18} color={colors.textMuted} />
+                </ScalePress>
               </View>
             </PlainScrollView>
+            {/* 保存 / 删除钉在弹层底部：正文再长也不会把它们顶出可视区。 */}
+            <View style={styles.inlineActions}>
+              <Button label="保存" onPress={() => void save()} disabled={busy || !title.trim()} loading={busy} />
+              {editing ? (
+                <ScalePress accessibilityLabel="删除笔记" onPress={() => confirmDelete(editing)} style={styles.secondaryIconAction}>
+                  <Ionicons name="trash-outline" size={21} color={colors.danger} />
+                </ScalePress>
+              ) : null}
+            </View>
           </View>
         </SheetBackdrop>
       </Modal>
@@ -492,7 +502,12 @@ const styles = StyleSheet.create({
   sheetMeta: { marginTop: 3, color: colors.textMuted, fontSize: 12 },
   sheetContent: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.xxl },
   contentInput: { minHeight: 260 },
-  inlineActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  // 收起态给个上限，长正文不再一路长高把保存键顶出去；摊开后不限高，由弹层滚动承接。
+  longInputClamp: { maxHeight: 320 },
+  longInputWrap: { position: "relative" },
+  longInputToggle: { position: "absolute", top: 0, right: 0, width: 32, height: 24, alignItems: "center", justifyContent: "center" },
+  // 按钮行已挪出滚动区，底部留白改由它自己承担。
+  inlineActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, marginTop: spacing.sm },
   secondaryIconAction: { width: 46, height: 46, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.surface },
   targetRow: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, marginBottom: 8 },
   targetRowCurrent: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
