@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { KeyboardAwareScrollView, KeyboardAvoidingView } from "react-native-keyboard-controller";
 
-import { Button, ConfirmDialog, EmptyState, ErrorNotice, Field, Header, NoticeToast, ScalePress, Screen, useNotice } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, ErrorNotice, ExpandableField, Field, Header, NoticeToast, ScalePress, Screen, useNotice } from "@/components/ui";
 import {
   deleteWorldInfoEntry,
   getOrCreateWorldInfo,
@@ -334,12 +334,7 @@ export function WorldInfoScreen() {
             >
               <Field label="条目名称" value={entryName} onChangeText={setEntryName} autoFocus={!editingEntry} />
               <Field label="触发关键词（用逗号分隔，可选）" value={entryKeywords} onChangeText={setEntryKeywords} placeholder="对话中出现这些词时，写作助手会优先读取本条目" />
-              <View style={styles.longInputWrap}>
-                <Field label="条目内容" value={entryContent} onChangeText={setEntryContent} multiline textAlignVertical="top" style={[styles.entryInput, !entryContentExpanded && styles.longInputClamp]} placeholder="人物关系、地点规则、时代背景等" />
-                <ScalePress accessibilityLabel={entryContentExpanded ? "收起条目内容" : "展开条目内容"} onPress={() => setEntryContentExpanded((value) => !value)} hitSlop={8} style={styles.longInputToggle}>
-                  <Ionicons name={entryContentExpanded ? "chevron-up" : "chevron-down"} size={18} color={colors.textMuted} />
-                </ScalePress>
-              </View>
+              <ExpandableField label="条目内容" value={entryContent} onChangeText={setEntryContent} expanded={entryContentExpanded} onToggle={() => setEntryContentExpanded((value) => !value)} placeholder="人物关系、地点规则、时代背景等" />
               <Pressable
                 accessibilityLabel={entryTriggerVisible ? "收起触发条件" : "展开触发条件"}
                 onPress={() => setEntryTriggerVisible((value) => !value)}
@@ -445,16 +440,13 @@ const styles = StyleSheet.create({
   form: { gap: spacing.lg, paddingVertical: spacing.sm },
   // 面板限高 80%，中间这层要能收缩，里面的滚动区才不会被内容撑满。
   formScroll: { flexShrink: 1 },
-  entryInput: { minHeight: 190 },
-  // 收起态给个上限，长条目不再一路长高把保存键顶出去；摊开后不限高，由弹层滚动承接。
-  longInputClamp: { maxHeight: 320 },
-  longInputWrap: { position: "relative" },
-  longInputToggle: { position: "absolute", top: 0, right: 0, width: 32, height: 24, alignItems: "center", justifyContent: "center" },
   switchRow: { minHeight: 50, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   switchLabel: { color: colors.text, fontSize: 15, fontWeight: "600" },
   triggerToggle: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: spacing.xs },
   triggerToggleText: { color: colors.textMuted, fontSize: 13, fontWeight: "600" },
-  triggerBox: { gap: spacing.lg, padding: spacing.md, borderRadius: radius.sm, backgroundColor: colors.surfaceMuted },
+  // 触发条件的展开区：只留块间距，不铺底色、不画外框 —— 它与上面几组字段同处一张表单，
+  // 再套一层灰底会让这一块像另一张卡。
+  triggerBox: { gap: spacing.lg },
   triggerCopy: { flex: 1, minWidth: 0, gap: 2 },
   triggerHint: { color: colors.textMuted, fontSize: 12 },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm, marginTop: spacing.md },

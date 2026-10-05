@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -22,11 +23,15 @@ import type {
 } from "@/types";
 
 /**
- * 层级只靠缩进表达：组头贴最左，子行统一往里一档。
+ * 三级，每一级只靠缩进与字体表达，不画任何线（竖线也画过，字与圈被挤得看不出层次）。
  *
- * 纵向的串联感由对齐与递进承担，不另画贯穿线 —— 线一多，圈圈与文字的间距反而被压得
- * 看不出层次。
+ *   第一级 · 组头（处理完成 · 用时 · 字数）           节点左缘 0
+ *   第二级 · 思考过程 / 执行完成（连续调用的外壳）     节点左缘 8
+ *   第三级 · 一次具体的调用（已执行 询问用户）         节点左缘 16
+ *
+ * 第四层不是级别：第三级展开出来的「参数 / 结果」是那一行的内容，与它的文字同列（左缘 34）。
  */
+const MONO_FONT = Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" });
 
 /**
  * 行首的节点，一个标记同时承担"节点"与"状态"：跑着是转圈、完成是实心或空心、失败是叉。
@@ -91,7 +96,36 @@ function EventPayload({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 组内的一条工具 / 提问 / 技能：行首一个节点，节点兼作状态。 */
+/**
+ * 第二级：一段连续的调用。
+ *
+ * 一轮里常连着调好几个工具（读章节、核对角色、写章节），逐个平铺会让"这一轮动了哪些手"
+ * 散成一片；包成一组之后，第二级是「执行完成 · N 项」，第三级才是每一次调用。
+ *
+ * 这一层不做折叠：一轮只有一个折叠（组头那个），多一个箭头就多一次"点了没反应"。
+ * 组里的状态由下面每一行的节点自己说，这一行只报整组的结果。
+ */
+function TraceEventGroup({ events }: { events: AgentTraceEvent[] }) {
+  const running = events.some((event) => event.status === "running" || event.status === "waiting");
+  const failed = events.some((event) => event.status === "error");
+  const label = failed ? "执行中断" : running ? "正在执行" : "执行完成";
+  return (
+    <View>
+      <View style={styles.groupHeader}>
+        <View style={styles.nodeSlotGroup}>
+          <View style={[styles.nodeGroup, failed && styles.nodeGroupFailed]} />
+        </View>
+        <Text style={styles.groupTitle}>
+          {label}
+          {events.length > 1 ? ` · ${events.length} 项` : ""}
+        </Text>
+      </View>
+      {events.map((event) => <TraceEventRow key={event.id} event={event} />)}
+    </View>
+  );
+}
+
+/** 第三级：一次具体的调用（「已执行 询问用户」这种）。行首一个节点，节点兼作状态。 */
 function TraceEventRow({ event }: { event: AgentTraceEvent }) {
   const [expanded, setExpanded] = useState(false);
   const hasPayload = Boolean(event.input || event.output);
@@ -124,7 +158,7 @@ function TraceEventRow({ event }: { event: AgentTraceEvent }) {
       </Pressable>
       {expanded ? (
         <View style={styles.payloads}>
-          {event.input ? <EventPayload label="输入" value={event.input} /> : null}
+          {event.input ? <EventPayload label="参数" value={event.input} /> : null}
           {event.output ? <EventPayload label="结果" value={event.output} /> : null}
         </View>
       ) : null}
@@ -226,6 +260,9 @@ export function buildTraceLines(input: {
  * 组头只留三样：节点、状态词、用时与合计字数。工具名不进组头 —— 一多就
  * 会被挤成几个字，而展开后每行都写着它。
  *
+ * 展开后是三级：组头 → 思考段 / 「执行完成」壳（连续的调用合成一组）→ 每一次调用。
+ * 具体一级的「参数 / 结果」是那一行的内容，不算级别。
+ *
  * 收起时机：跑着展开（过程要看得到），跑完收起（体量不能一直占屏）。失败除外 ——
  * 报错必须一眼看见。收起前还要问一句外层列表是不是停在最新（`listAtBottomRef`）：
  * 用户正往上翻历史时收，高度一变矮就会把他看的位置拽走。
@@ -291,6 +328,24 @@ export function AgentTraceView({
 
   const status = useMemo(() => activityLabel(visibleLines, trace), [visibleLines, trace]);
 
+  // 连续的调用合成一组：第二级是「执行完成」，第三级才是每一次调用。思考段自成一块，
+  // 与执行组同级、按真实顺序交替出现。
+  const blocks = useMemo(() => {
+    const out: Array<{ key: string; reasoning?: TraceLine; events?: AgentTraceEvent[] }> = [];
+    for (const line of visibleLines) {
+      if (line.kind === "reasoning") {
+        out.push({ key: `reasoning-${out.length}`, reasoning: line });
+        continue;
+      }
+      const event = line.id ? eventsById.get(line.id) : undefined;
+      if (!event) continue;
+      const tail = out[out.length - 1];
+      if (tail?.events) tail.events.push(event);
+      else out.push({ key: event.id, events: [event] });
+    }
+    return out;
+  }, [visibleLines, eventsById]);
+
   // 字数合计：收起后只剩组头，展开区还可能被截断，总数只有这里说得清。
   const reasoningChars = useMemo(
     () => visibleLines.reduce((sum, line) => sum + (line.kind === "reasoning" ? (line.text ?? "").trim().length : 0), 0),
@@ -333,13 +388,13 @@ export function AgentTraceView({
               <Text style={styles.collaborationText}>此任务可按需调用专业子智能体协作</Text>
             </View>
           ) : null}
-          {visibleLines.map((line, index) => {
-            if (line.kind === "reasoning") {
-              return <ReasoningSegment key={`reasoning-${index}`} text={line.text ?? ""} live={line.live} />;
-            }
-            const event = line.id ? eventsById.get(line.id) : undefined;
-            return event ? <TraceEventRow key={event.id} event={event} /> : null;
-          })}
+          {blocks.map((block) =>
+            block.reasoning ? (
+              <ReasoningSegment key={block.key} text={block.reasoning.text ?? ""} live={block.reasoning.live} />
+            ) : (
+              <TraceEventGroup key={block.key} events={block.events ?? []} />
+            ),
+          )}
         </View>
       ) : null}
     </View>
@@ -509,26 +564,42 @@ const styles = StyleSheet.create({
   // 组根：不画外框与底色，状态行与后续轨迹直接落在消息/实时时间线上。
   trace: { alignSelf: "flex-start", flexShrink: 1, maxWidth: "88%" },
   traceInline: { borderWidth: 0, borderRadius: 0, backgroundColor: "transparent" },
-  // 缩进决定层级：组头节点圆心在 +13，子行节点圆心在 +33（往里一档 20）。这个位置关系由
-  // nodeSlotLead / nodeSlotChild 的宽度加各行 paddingLeft 决定，动其中一处要一起看。
-  // 组头节点（实心、稍大）与子行节点（空心、稍小）：一个标记兼作节点与状态。
+  // 层级由"各行的 paddingLeft + 节点容器宽度"共同决定，动其中一处要一起看。一档取 8：
+  // 深一档只是"往里让一点"（20 太松、12 看着仍远），三级正文被推得太靠右时一条消息里显空。
+  //   第一级（组头）     paddingLeft 0 + nodeSlotLead 14 ⇒ 文字 22
+  //   第二级（思考/执行完成）paddingLeft 8 + nodeSlotChild 10 ⇒ 文字 26
+  //   第三级（一次调用）  paddingLeft 16 + nodeSlotChild 10 ⇒ 文字 34
+  // 三个节点标记：第一级实心稍大（兼状态）、第二级小实心点（只表示"这是一组"）、
+  // 第三级空心圈（兼状态）。
   nodeSlotLead: { width: 14, alignItems: "center", justifyContent: "center" },
   nodeLead: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.primary },
   nodeSlotChild: { width: 10, alignItems: "center", justifyContent: "center" },
   nodeChild: { width: 10, height: 10, borderRadius: 5, borderWidth: 1.5, borderColor: colors.textMuted },
-  // 组头：节点圆心定在 +13，所以左侧内边距 = 圆心 13 − 半径 7。
+  nodeSlotGroup: { width: 10, height: 10, alignItems: "center", justifyContent: "center" },
+  nodeGroup: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textMuted },
+  nodeGroupFailed: { backgroundColor: colors.danger },
+  // 组头：节点左缘与正文左缘对齐（圆心 = 半径 7），所以左侧不留内边距。
   traceHeader: {
     minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
-    paddingLeft: 6,
     paddingVertical: spacing.xs,
   },
   traceStatus: { flexShrink: 0, fontSize: 13, fontWeight: "700" },
   traceSpacer: { flex: 1 },
   traceElapsed: { flexShrink: 0, color: colors.textMuted, fontSize: 12 },
   events: {},
+  // 第二级「执行完成」：与「思考过程」同一档缩进，差别是它下面还挂着第三级。
+  groupHeader: {
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingLeft: 8,
+    paddingVertical: spacing.xs,
+  },
+  groupTitle: { flexShrink: 1, color: colors.text, fontSize: 13 },
   collaborationNotice: {
     minHeight: 34,
     flexDirection: "row",
@@ -540,18 +611,18 @@ const styles = StyleSheet.create({
   collaborationText: { flex: 1, color: colors.primary, fontSize: 12, fontWeight: "600" },
   // 思考段：组内的一段，没有自己的折叠箭头；正文与子行文字同列，不再自成一块。
   reasoningSegment: { paddingHorizontal: 0 },
-  reasoningSegmentHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 42, paddingLeft: 28 },
+  reasoningSegmentHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 42, paddingLeft: 8 },
   reasoningSegmentTitle: { color: colors.text, fontSize: 13 },
   reasoningSegmentTitleLive: { color: colors.primary },
   reasoningSegmentText: { color: colors.textMuted, fontSize: 13, lineHeight: 20 },
-  reasoningSegmentBody: { marginTop: spacing.xs, paddingLeft: 46 },
-  // 子行：同样只有一圈一行，行高与组头一致；层级靠缩进与字体分，不靠尺寸。
+  reasoningSegmentBody: { marginTop: spacing.xs, paddingLeft: 26 },
+  // 第三级：具体的一次调用。行高与上面两级一致，层级只靠缩进，不靠尺寸。
   eventHeader: {
     minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
-    paddingLeft: 28,
+    paddingLeft: 16,
     paddingVertical: spacing.xs,
   },
   eventCopy: { flexShrink: 1, minWidth: 0 },
@@ -559,12 +630,12 @@ const styles = StyleSheet.create({
   eventTitle: { flexShrink: 1, color: colors.text, fontSize: 13 },
   agentName: { flexShrink: 1, color: colors.textMuted, fontSize: 11 },
   eventDetail: { marginTop: 3, color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-  // 输入 / 结果两块与子行文字同列（+46 = 子行 paddingLeft 28 + 节点 10 + 间隔 8），缩进跟着
-  // 层级走；不铺底色，两块之间靠间距与「输入 / 结果」两个标签区分。
-  payloads: { gap: spacing.sm, paddingLeft: 46, paddingBottom: spacing.sm },
+  // 「参数 / 结果」是第三级那一行的内容，与那一行的文字同列（+34 = 上面 paddingLeft 16 +
+  // 节点 10 + 间隔 8）。不铺底色、不画线：等宽字体与两个标签已经说明它是数据，不是正文。
+  payloads: { gap: spacing.sm, paddingLeft: 34, paddingBottom: spacing.sm },
   payload: { gap: spacing.xs },
   payloadLabel: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
-  payloadText: { color: colors.text, fontSize: 12, lineHeight: 18 },
+  payloadText: { color: colors.text, fontSize: 12, lineHeight: 18, fontFamily: MONO_FONT },
   // 提问卡与写入确认卡同一套：浮在屏幕中间 + 遮罩 0.48，数值与全项目的居中卡一致。
   questionBackdrop: { flex: 1, justifyContent: "center", padding: spacing.lg, backgroundColor: colors.overlay },
   questionSheet: {

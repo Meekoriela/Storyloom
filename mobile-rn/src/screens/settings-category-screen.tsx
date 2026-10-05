@@ -15,7 +15,7 @@ import {
   View,
 } from "react-native";
 
-import { BottomSheet, Button, ConfirmDialog, ErrorNotice, Field, Header, NoticeToast, PlainScrollView, ScalePress, Screen, useNotice } from "@/components/ui";
+import { BottomSheet, Button, ConfirmDialog, ErrorNotice, ExpandableField, Field, Header, NoticeToast, PlainScrollView, ScalePress, Screen, useNotice } from "@/components/ui";
 import { MASCOT_OPTIONS, normalizeMascotKind } from "@/settings/mascots";
 import {
   getSetting,
@@ -321,12 +321,15 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [ruleName, setRuleName] = useState("");
   const [ruleContent, setRuleContent] = useState("");
+  const [ruleContentExpanded, setRuleContentExpanded] = useState(false);
   const [skillName, setSkillName] = useState("");
   const [skillDescription, setSkillDescription] = useState("");
   const [skillInstructions, setSkillInstructions] = useState("");
+  const [skillInstructionsExpanded, setSkillInstructionsExpanded] = useState(false);
   const [agentName, setAgentName] = useState("");
   const [agentDescription, setAgentDescription] = useState("");
   const [agentPrompt, setAgentPrompt] = useState("");
+  const [agentPromptExpanded, setAgentPromptExpanded] = useState(false);
   const [agentModelId, setAgentModelId] = useState("");
   const [historyLimit, setHistoryLimit] = useState("30");
   const [contextWindow, setContextWindow] = useState(String(DEFAULT_CONTEXT_WINDOW_TOKENS));
@@ -338,7 +341,6 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
   const [chatFontId, setChatFontId] = useState<EditorFontId>("system");
   const editorFontSizeValue = normalizeEditorFontSize(editorFontSize);
   const chatFontSizeValue = normalizeChatFontSize(chatFontSize);
-  const [requestTimeout, setRequestTimeout] = useState("120000");
   const [ohStoryState, setOhStoryState] = useState<OhStoryUpdateState>(EMPTY_OH_STORY_STATE);
   const [ohStoryProgress, setOhStoryProgress] = useState("");
   const [ohStoryBusy, setOhStoryBusy] = useState(false);
@@ -572,7 +574,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     setLoading(true);
     setError(null);
     try {
-      const [nextIndex, nextRules, nextSkills, nextAgents, nextPermissions, nextWriteApproval, active, history, compress, autoSave, fontSize, fontFamily, chatFontSizeRaw, chatFontFamilyRaw, contextWindowRaw, timeout, nextModels, nextOhStoryState, nextResourceState] = await Promise.all([
+      const [nextIndex, nextRules, nextSkills, nextAgents, nextPermissions, nextWriteApproval, active, history, compress, autoSave, fontSize, fontFamily, chatFontSizeRaw, chatFontFamilyRaw, contextWindowRaw, nextModels, nextOhStoryState, nextResourceState] = await Promise.all([
         getIndexSettings(),
         getAgentRules(),
         getAgentSkills(),
@@ -588,7 +590,6 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
         getSetting(CHAT_FONT_SIZE_KEY),
         getSetting(CHAT_FONT_KEY),
         getSetting(CONTEXT_WINDOW_KEY),
-        getSetting("connections.requestTimeout"),
         listModels(),
         getOhStoryUpdateState(),
         getRuntimeResourceState(),
@@ -618,7 +619,6 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
       setEditorFontId(normalizeEditorFont(fontFamily));
       setChatFontSize(String(normalizeChatFontSize(chatFontSizeRaw)));
       setChatFontId(normalizeEditorFont(chatFontFamilyRaw));
-      setRequestTimeout(timeout ?? "120000");
       setAvailableModels(nextModels);
       setOhStoryState(nextOhStoryState);
       setResourceState(nextResourceState);
@@ -1398,7 +1398,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
             <Button label="载入示例" variant="secondary" onPress={fillRuleExample} />
           ) : null}
           <Field label="规则名称" value={ruleName} onChangeText={setRuleName} />
-          <Field label="规则内容" value={ruleContent} onChangeText={setRuleContent} multiline style={styles.multiline} />
+          <ExpandableField label="规则内容" value={ruleContent} onChangeText={setRuleContent} expanded={ruleContentExpanded} onToggle={() => setRuleContentExpanded((value) => !value)} />
           {editingRuleId ? (
             <>
               <Button label="保存修改" onPress={() => void saveRuleEdit()} disabled={!ruleName.trim() || !ruleContent.trim()} />
@@ -1482,7 +1482,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
           ) : null}
           <Field label="技能名称" value={skillName} onChangeText={setSkillName} />
           <Field label="技能说明" value={skillDescription} onChangeText={setSkillDescription} />
-          <Field label="技能指令" value={skillInstructions} onChangeText={setSkillInstructions} multiline style={styles.multiline} />
+          <ExpandableField label="技能指令" value={skillInstructions} onChangeText={setSkillInstructions} expanded={skillInstructionsExpanded} onToggle={() => setSkillInstructionsExpanded((value) => !value)} />
           {editingSkillId ? (
             <>
               <Button label="保存修改" onPress={() => void saveSkillEdit()} disabled={!skillName.trim() || !skillInstructions.trim()} />
@@ -1570,7 +1570,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
           ) : null}
           <Field label="智能体名称" value={agentName} onChangeText={setAgentName} />
           <Field label="智能体说明" value={agentDescription} onChangeText={setAgentDescription} />
-          <Field label="系统提示词" value={agentPrompt} onChangeText={setAgentPrompt} multiline style={styles.multiline} />
+          <ExpandableField label="系统提示词" value={agentPrompt} onChangeText={setAgentPrompt} expanded={agentPromptExpanded} onToggle={() => setAgentPromptExpanded((value) => !value)} />
           <Text style={styles.sectionHint}>智能体模型</Text>
           <View style={styles.modelChoices}>
             <Pressable onPress={() => setAgentModelId("")} style={[styles.modelChoice, !agentModelId && styles.modelChoiceActive]}>
@@ -1760,7 +1760,6 @@ const styles = StyleSheet.create({
   activeRow: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
   manageText: { flex: 1, minWidth: 0, gap: spacing.xs },
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-  multiline: { minHeight: 120 },
   progressText: { color: colors.primary, fontSize: 13 },
   updateNotes: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
   statusText: { color: colors.textMuted, fontSize: 13 },

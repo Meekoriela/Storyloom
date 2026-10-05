@@ -78,7 +78,7 @@ const PROVIDER_PRESETS: Array<{
   // 免费额度与免费模型的说明统一由「免费模型」分类页负责，此处只做地址预设。
   { id: "zhipu", label: "智谱", name: "智谱", url: "https://open.bigmodel.cn/api/paas/v4", modelHint: "glm-4.7-flash" },
   { id: "siliconflow", label: "硅基流动", name: "硅基流动", url: "https://api.siliconflow.cn/v1", modelHint: "Qwen/Qwen2.5-7B-Instruct" },
-  { id: "openrouter", label: "OpenRouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", modelHint: "deepseek/deepseek-chat-v3.1:free" },
+  { id: "openrouter", label: "OpenRouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", modelHint: "openrouter/free" },
   { id: "dashscope", label: "通义千问", name: "阿里云百炼", url: "https://dashscope.aliyuncs.com/compatible-mode/v1", modelHint: "qwen-turbo" },
   { id: "deepseek", label: "DeepSeek", name: "DeepSeek", url: "https://api.deepseek.com/v1", modelHint: "deepseek-chat" },
   { id: "moonshot", label: "Kimi", name: "月之暗面", url: "https://api.moonshot.cn/v1", modelHint: "moonshot-v1-8k" },
@@ -86,15 +86,18 @@ const PROVIDER_PRESETS: Array<{
 ];
 
 /**
- * 供应商行第二行只显示主机名。
+ * 供应商行第二行显示「协议 + 域名」。
  *
- * 完整地址长短差得多：`https://open.bigmodel.cn/api/paas/v4` 会被行宽截成
- * `https://open.bigmodel.c…`，`https://flowbee.top/v1` 却能完整显示，两块并排时
- * 看着一条断、一条全。协议头与后面的路径对用户没有信息量，认站点只需要域名。
+ * 只留域名会看成 `openbigmodel.cn` 这种连在一起的写法，认不出是哪家；地址里本来的
+ * 协议头因此一并留下。各家后面的路径长短差得多，一起显示会被行宽截成一条断、一条全。
+ *
+ * 协议不写死为 https：用户填的地址可以是 http（本机 ollama、局域网中转都是），
+ * 校验放行的也是 http 与 https 两种，这里照原样显示。
  */
-function hostOf(url: string): string {
-  const host = url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split("/")[0];
-  return host || url;
+function siteOf(url: string): string {
+  const matched = url.match(/^([a-z][a-z0-9+.-]*:\/\/)?([^/?#]+)/i);
+  if (!matched) return url;
+  return `${matched[1] ?? ""}${matched[2]}`;
 }
 
 /**
@@ -219,6 +222,9 @@ export function SettingsScreen() {
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [savingModel, setSavingModel] = useState(false);
+  // 模型能力页那颗「保存」单独一个标志位：勾选入库那条路（addModel）用的是 savingModel，
+  // 两处共用一个会让"正在勾选入库"时这颗保存也跟着转圈并禁用。
+  const [savingCapability, setSavingCapability] = useState(false);
   const [fetchingProviderId, setFetchingProviderId] = useState<string | null>(null);
   const [modelsView, setModelsView] = useState<"home" | "addProvider">("home");
   const [addStep, setAddStep] = useState(1);
@@ -593,10 +599,12 @@ export function SettingsScreen() {
                   const parsedMaxTokens = Number(capDraft.maxTokens);
                   if (!Number.isFinite(parsedTemperature) || parsedTemperature < 0 || parsedTemperature > 2) { setError("温度必须在 0 到 2 之间"); return; }
                   if (!Number.isInteger(parsedMaxTokens) || parsedMaxTokens < 1 || parsedMaxTokens > MAX_CONFIGURED_OUTPUT_TOKENS) { setError(`最大输出 Token 数必须在 1 到 ${MAX_CONFIGURED_OUTPUT_TOKENS} 之间`); return; }
+                  setSavingCapability(true);
                   void saveModel({ ...model, temperature: parsedTemperature, maxTokens: parsedMaxTokens, supportsTools: capDraft.supportsTools, supportsVision: capDraft.supportsVision })
                     .then(() => { refreshData(); showNotice("已保存「" + model.name + "」"); })
-                    .catch((saveError) => setError(saveError instanceof Error ? saveError.message : String(saveError)));
-                }} loading={savingModel} />
+                    .catch((saveError) => setError(saveError instanceof Error ? saveError.message : String(saveError)))
+                    .finally(() => setSavingCapability(false));
+                }} loading={savingCapability} />
                 </View>
               </View>
             ) : null}
@@ -787,7 +795,7 @@ export function SettingsScreen() {
               <View style={styles.providerHeader}>
                 <View style={styles.providerInfo}>
                   <Text style={styles.providerName}>{provider.name}</Text>
-                  <Text style={styles.providerUrl} numberOfLines={1}>{hostOf(provider.baseUrl)}</Text>
+                  <Text style={styles.providerUrl} numberOfLines={1}>{siteOf(provider.baseUrl)}</Text>
                 </View>
                 <View style={styles.providerActions}>
                   <Pressable

@@ -875,7 +875,7 @@ export function WritingScreen() {
     <Screen>
       <Header
         leading={(
-          <ScalePress accessibilityLabel="作品结构" onPress={() => setDrawerVisible(true)} style={styles.iconButton}>
+          <ScalePress accessibilityLabel="作品结构" hitSlop={{ left: 12 }} onPress={() => setDrawerVisible(true)} style={styles.headerMenuButton}>
             {/* 两条线，一长一短：与多数阅读类应用的入口一致，不与返回箭头混。 */}
             <View style={styles.menuGlyph}>
               <View style={[styles.menuGlyphBar, styles.menuGlyphBarLong]} />
@@ -1228,6 +1228,9 @@ const styles = StyleSheet.create({
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
   muted: { color: colors.textMuted, fontSize: 15, padding: spacing.lg, textAlign: "center" },
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  // 左上角那个入口单独一份：让它与顶栏自身的 16dp 内边距对齐（图形左缘落在 16）。
+  // 44 宽的容器会把这个图形居中到 28，所以这里把容器收窄到 32，触摸区由左侧 hitSlop 补回 44。
+  headerMenuButton: { width: 32, height: 44, alignItems: "flex-start", justifyContent: "center" },
   headerActions: { flexDirection: "row", alignItems: "center" },
   // 顶栏入口：两条线，上长下短。
   menuGlyph: { width: 20, gap: 5 },

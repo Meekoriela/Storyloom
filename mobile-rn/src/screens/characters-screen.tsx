@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { KeyboardAwareScrollView, KeyboardAvoidingView } from "react-native-keyboard-controller";
 
-import { Button, ConfirmDialog, EmptyState, ErrorNotice, Field, Header, NoticeToast, ScalePress, Screen, useNotice } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, ErrorNotice, ExpandableField, Field, Header, NoticeToast, ScalePress, Screen, useNotice } from "@/components/ui";
 import { downsampleToFile } from "@/lib/media-downsample";
 import { deleteCharacter, getProject, listCharacters, saveCharacter } from "@/data/repositories";
 import { exportCharacters, type LibraryExportFormat } from "@/lib/export";
@@ -332,12 +332,7 @@ export function CharactersScreen() {
                   {imagePath ? <Button label="移除图片" variant="secondary" onPress={() => setImagePath("")} /> : null}
                 </View>
               </View>
-              <View style={styles.longInputWrap}>
-                <Field label="角色设定" value={description} onChangeText={setDescription} multiline textAlignVertical="top" style={[styles.descriptionInput, !descriptionExpanded && styles.longInputClamp]} placeholder="外貌、性格、经历、关系和写作注意事项" />
-                <ScalePress accessibilityLabel={descriptionExpanded ? "收起角色设定" : "展开角色设定"} onPress={() => setDescriptionExpanded((value) => !value)} hitSlop={8} style={styles.longInputToggle}>
-                  <Ionicons name={descriptionExpanded ? "chevron-up" : "chevron-down"} size={18} color={colors.textMuted} />
-                </ScalePress>
-              </View>
+              <ExpandableField label="角色设定" value={description} onChangeText={setDescription} expanded={descriptionExpanded} onToggle={() => setDescriptionExpanded((value) => !value)} placeholder="外貌、性格、经历、关系和写作注意事项" />
               <View style={styles.switchRow}>
                 <Text style={styles.switchLabel}>收藏角色</Text>
                 <Switch value={isFavorited} onValueChange={setIsFavorited} trackColor={{ false: colors.border, true: colors.primary }} />
@@ -405,11 +400,6 @@ const styles = StyleSheet.create({
   // 面板限高 80%，中间这层要能收缩，里面的滚动区才不会被内容撑满。
   formScroll: { flexShrink: 1 },
   form: { gap: spacing.lg, paddingVertical: spacing.sm },
-  descriptionInput: { minHeight: 180 },
-  // 收起态给个上限，长设定不再一路长高把保存键顶出去；摊开后不限高，由弹层滚动承接。
-  longInputClamp: { maxHeight: 320 },
-  longInputWrap: { position: "relative" },
-  longInputToggle: { position: "absolute", top: 0, right: 0, width: 32, height: 24, alignItems: "center", justifyContent: "center" },
   switchRow: { minHeight: 50, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   switchLabel: { color: colors.text, fontSize: 15, fontWeight: "600" },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm, marginTop: spacing.md },

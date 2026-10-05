@@ -273,7 +273,7 @@ function retryRequestForMessage(
     userMessage,
     history: messages.slice(0, userIndex + 1),
     sourceMessageId: message.id,
-    modelId: context?.modelId ?? session.modelId ?? selection?.model.id ?? "",
+    modelId: context?.modelId ?? selection?.model.id ?? "",
     agentId: context?.agentId ?? agentId,
   };
 }
@@ -300,6 +300,8 @@ export function AssistantScreen() {
   const [models, setModels] = useState<Model[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [defaultModelId, setDefaultModelId] = useState<string | null>(null);
+  // 用户显式选过的那一个（对应设置里的 activeModelId）。为空表示「跟随主智能体或默认模型」。
+  const [explicitModelId, setExplicitModelId] = useState<string | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [activeAgentName, setActiveAgentName] = useState("Build");
   const [styleProfiles, setStyleProfiles] = useState<StyleProfile[]>([]);
@@ -380,12 +382,11 @@ export function AssistantScreen() {
   const load = useCallback(async (overrideId?: string) => {
     const requestId = loadRequestRef.current + 1;
     loadRequestRef.current = requestId;
-    let activeProjectId = overrideId ?? projectId ?? scratchProjectId;
-    if (!activeProjectId) {
-      const scratch = await ensureScratchProject();
-      activeProjectId = scratch.id;
-      setScratchProjectId(scratch.id);
-    }
+    const activeProjectId = overrideId ?? projectId ?? scratchProjectId;
+    // 无作品模式且还没开聊：不再预创建空作品，页面就停在欢迎屏。模型、供应商与设置
+    // 照常加载（发送按钮的可用性取决于它们）；作品与会话留给第一次点发送那一刻创建
+    // —— 点输入框、打字、点建议 chip 都不建任何东西。
+    const noProject = !activeProjectId;
     setLoading(true);
     setError(null);
     try {
@@ -402,19 +403,20 @@ export function AssistantScreen() {
         nextActiveStyleProfile,
         approvalMode,
       ] = await Promise.all([
-        getProject(activeProjectId),
-        listChatSessions(activeProjectId),
-        getSetting(activeSessionSettingKey(activeProjectId)),
+        // 还没开聊时这些按空作品查（本地库，空 id 直接查不到），省掉一整套分支。
+        getProject(activeProjectId ?? ""),
+        listChatSessions(activeProjectId ?? ""),
+        getSetting(activeSessionSettingKey(activeProjectId ?? "")),
         getSetting("activeModelId"),
         listModels(),
         listProviders(),
         getSetting("agent.activeDefinitionId"),
         getAgentDefinitions(),
-        listStyleProfiles(activeProjectId),
-        getActiveStyleProfile(activeProjectId),
+        listStyleProfiles(activeProjectId ?? ""),
+        getActiveStyleProfile(activeProjectId ?? ""),
         getWriteApproval(),
       ]);
-      if (!nextProject) throw new Error("作品不存在");
+      if (!noProject && !nextProject) throw new Error("作品不存在");
       const activeAgent = agents.find((agent) => agent.id === activeAgentId && agent.enabled && agent.kind === "primary")
         ?? agents.find((agent) => agent.id === "builtin-agent--build" && agent.enabled)
         ?? agents.find((agent) => agent.enabled && agent.kind === "primary");
@@ -426,18 +428,12 @@ export function AssistantScreen() {
       }
       let nextSessions = storedSessions;
       let nextSession = nextSessions.find((session) => session.id === preferredSessionId) ?? nextSessions[0] ?? null;
-      if (!nextSession) {
-        nextSession = await createChatSession(activeProjectId, nextDefaultModelId);
-        nextSessions = [nextSession];
-      }
-      const selectedModelId = nextModels.some((model) => model.id === nextSession?.modelId)
-        ? nextSession.modelId
-        : nextDefaultModelId;
-      if (nextSession.modelId !== selectedModelId) {
-        nextSession = await updateChatSession({ id: nextSession.id, modelId: selectedModelId });
-        nextSessions = nextSessions.map((session) => session.id === nextSession?.id ? nextSession as ChatSession : session);
-      }
-      const nextMessages = await listMessages(nextSession.id);
+      // 打开一部从没聊过的作品时不再预建一条「新对话」：页面直接是空对话，
+      // 第一条对话与作品一起等发第一条消息那一刻才建（唯一创建点在 send 里）。
+      // 模型是全局唯一的：每条对话不再各存一份，一律用当前模型（activeModelId）。
+      // 换模型因此立刻对所有对话生效，包括已经聊过的那些。
+      const selectedModelId = nextDefaultModelId;
+      const nextMessages = nextSession ? await listMessages(nextSession.id) : [];
       let nextSelection: ModelSelection | null = null;
       let selectionError: string | null = null;
       try {
@@ -445,7 +441,7 @@ export function AssistantScreen() {
       } catch (resolveError) {
         selectionError = resolveError instanceof Error ? resolveError.message : String(resolveError);
       }
-      await setSetting(activeSessionSettingKey(activeProjectId), nextSession.id);
+      if (nextSession) await setSetting(activeSessionSettingKey(activeProjectId!), nextSession.id);
       if (loadRequestRef.current !== requestId) return;
       setProject(nextProject);
       setSessions(nextSessions);
@@ -453,10 +449,11 @@ export function AssistantScreen() {
       setMessages(nextMessages);
       setWriteApproval(approvalMode);
             const lastFailed = [...nextMessages].reverse().find((message) => message.role === "assistant" && (message.metadata?.taskStatus === "failed" || message.metadata?.agentTrace?.status === "error"));
-      setRetryRequest(lastFailed ? retryRequestForMessage(lastFailed, nextMessages, nextSession, nextSelection, activeAgent?.id ?? null) : null);
+      setRetryRequest(lastFailed && nextSession ? retryRequestForMessage(lastFailed, nextMessages, nextSession, nextSelection, activeAgent?.id ?? null) : null);
       setModels(nextModels);
       setProviders(nextProviders);
       setDefaultModelId(nextDefaultModelId);
+      setExplicitModelId(activeModelId ?? null);
       setActiveAgentId(activeAgent?.id ?? null);
       setActiveAgentName(activeAgent?.name ?? "Build");
       setStyleProfiles(nextStyleProfiles);
@@ -482,7 +479,9 @@ export function AssistantScreen() {
       sendRequestRef.current += 1;
       cancelPendingQuestion();
     };
-  }, [cancelPendingQuestion, effectiveProjectId]);
+    // 只在"真的换了作品"时重置：创建速记作品（无作品 → 有作品）不算切换，
+    // 若跟着它重置，会把刚点下去的那次发送当场作废。
+  }, [cancelPendingQuestion, projectId]);
 
   useEffect(() => {
     setInput("");
@@ -507,17 +506,46 @@ export function AssistantScreen() {
     return () => clearInterval(timer);
   }, [sending]);
 
-  // 无作品模式：第一次真正开聊（聚焦输入或点建议）才创建「灵感速记」，不预创建空作品
-  const ensureConversation = useCallback(async () => {
-    if (effectiveProjectId || loading) return;
-    const scratch = await ensureScratchProject();
-    setScratchProjectId(scratch.id);
-    const session = await createChatSession(scratch.id, selection?.model.id ?? defaultModelId);
-    await setSetting(activeSessionSettingKey(scratch.id), session.id);
-    setSessions((current) => [session, ...current]);
-    setActiveSession(session);
-    await load(scratch.id);
-  }, [effectiveProjectId, loading, selection, defaultModelId, load]);
+  /**
+   * 第一次真正开聊（点了发送）才创建「灵感速记」与会话。
+   *
+   * 点输入框、打字、点建议 chip 都不建任何东西 —— 原先 `load()` 一进页面就把空作品建
+   * 出来，界面上凭空多一条「新对话」。
+   *
+   * 返回建好的作品与会话：发送那一处要继续用它们，而那次调用的闭包里 `project` /
+   * `activeSession` 还是旧值（setState 不会同步生效）。
+   */
+  const ensureConversation = useCallback(async (): Promise<{ project: Project; session: ChatSession; messages: ChatMessage[] } | null> => {
+    if (project && activeSession) return { project, session: activeSession, messages };
+    if (loading) return null;
+    try {
+      const scratch = project ?? await ensureScratchProject();
+      // 速记作品可能早就有会话（上次聊过，这次是重开应用进来的）：沿用它，并把历史消息一起
+      // 读回来。新开一条会把旧的留在库里不显示 —— 界面上就成了"聊过的记录消失"。
+      const stored = await listChatSessions(scratch.id);
+      const preferredId = await getSetting(activeSessionSettingKey(scratch.id));
+      const existing = activeSession ?? stored.find((item) => item.id === preferredId) ?? stored[0] ?? null;
+      const session = existing ?? await createChatSession(scratch.id, selection?.model.id ?? defaultModelId);
+      await setSetting(activeSessionSettingKey(scratch.id), session.id);
+      const nextSessions = stored.some((item) => item.id === session.id) ? stored : [session, ...stored];
+      const nextMessages = existing ? await listMessages(session.id) : [];
+      const [nextStyleProfiles, nextActiveStyleProfile] = await Promise.all([
+        listStyleProfiles(scratch.id),
+        getActiveStyleProfile(scratch.id),
+      ]);
+      setScratchProjectId(scratch.id);
+      setProject(scratch);
+      setSessions(nextSessions);
+      setActiveSession(session);
+      setMessages(nextMessages);
+      setStyleProfiles(nextStyleProfiles);
+      setActiveStyleProfileState(nextActiveStyleProfile);
+      return { project: scratch, session, messages: nextMessages };
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }, [project, activeSession, loading, selection, defaultModelId, messages]);
 
   const mascotOffsetRef = useRef({ x: 0, y: 0 });
   const mascotDragStartRef = useRef({ x: 0, y: 0 });
@@ -561,7 +589,7 @@ export function AssistantScreen() {
       ]);
       let effectiveWindow = normalizeContextWindow(windowValue);
       let effectiveLimit = Math.max(1, Number(limitValue) || 30);
-      const effectiveModelId = activeSession?.modelId ?? selection?.model?.id;
+      const effectiveModelId = selection?.model?.id;
       if (effectiveModelId) {
         const overrideRaw = await getSetting(`context.override.${effectiveModelId}`).catch(() => null);
         if (overrideRaw) {
@@ -589,13 +617,20 @@ export function AssistantScreen() {
       }
     })();
   }, []));
+  // 用 ref 取最新的 load：load 的依赖里含当前作品，若把它写进依赖数组，"刚创建出速记
+  // 作品"那一刻也会额外触发一次重载，把这一次发送作废（cleanup 里 loadRequestRef 自增）。
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  // projectId 必须留在依赖里：它就是"换了一部作品"这件事本身（抽屉选作品、书架点作品都
+  // 走它），拿掉之后切作品页面不会刷新。而创建速记作品只动 scratchProjectId，
+  // 不会走到这里 —— 那次发送因此不被打断。
   useFocusEffect(useCallback(() => {
-    void load();
+    void loadRef.current();
     return () => {
       loadRequestRef.current += 1;
       cancelPendingQuestion();
     };
-  }, [cancelPendingQuestion, load, revision]));
+  }, [cancelPendingQuestion, revision, projectId]));
 
   const switchSession = async (session: ChatSession) => {
     if (!effectiveProjectId || sending) return;
@@ -604,7 +639,8 @@ export function AssistantScreen() {
       if (session.projectId !== effectiveProjectId || !sessions.some((item) => item.id === session.id)) {
         throw new Error("对话不属于当前作品");
       }
-      const effectiveModelId = models.some((model) => model.id === session.modelId) ? session.modelId : defaultModelId;
+      // 模型不随对话走：切到哪条对话都用当前模型，切对话因此不会把模型也换掉。
+      const effectiveModelId = defaultModelId;
       const nextMessages = await listMessages(session.id);
       let nextSelection: ModelSelection | null = null;
       let selectionError: string | null = null;
@@ -711,13 +747,20 @@ export function AssistantScreen() {
   };
 
   const chooseModel = async (modelId: string | null) => {
-    if (!activeSession || sending) return;
+    if (sending) return;
     setError(null);
     try {
       const nextSelection = await resolveSelection(modelId ?? defaultModelId, models, providers);
-      const updated = await updateChatSession({ id: activeSession.id, modelId });
-      setActiveSession(updated);
-      setSessions((current) => current.map((session) => session.id === updated.id ? updated : session));
+      if (modelId) {
+        // 写全局那一份（activeModelId），所有对话立刻跟着变。
+        await setSetting("activeModelId", modelId);
+        setDefaultModelId(modelId);
+        setExplicitModelId(modelId);
+      } else {
+        // 选「跟随主智能体或默认模型」：清掉显式选择，回落到主智能体那一个。
+        await setSetting("activeModelId", "");
+        setExplicitModelId(null);
+      }
       setSelection(nextSelection);
       setModelPickerVisible(false);
     } catch (modelError) {
@@ -757,10 +800,18 @@ export function AssistantScreen() {
       const remaining = sessions.filter((item) => item.id !== session.id);
       setSessions(remaining);
       if (activeSession?.id !== session.id) return;
-      const replacement = remaining[0] ?? await createChatSession(targetProjectId, selection?.model.id ?? defaultModelId);
-      if (!remaining.length) setSessions([replacement]);
+      // 删掉的正好是当前对话、而且它是这条作品的最后一条：回到空对话，不再补建一条空的。
+      // 作品还在，下次点发送时会建一条新的 —— 空对话也是一个正常状态。
+      if (!remaining.length) {
+        await setSetting(activeSessionSettingKey(targetProjectId), "");
+        setActiveSession(null);
+        setMessages([]);
+        setRetryRequest(null);
+        return;
+      }
+      const replacement = remaining[0];
       await setSetting(activeSessionSettingKey(targetProjectId), replacement.id);
-      const effectiveModelId = models.some((model) => model.id === replacement.modelId) ? replacement.modelId : defaultModelId;
+      const effectiveModelId = defaultModelId;
       const nextMessages = await listMessages(replacement.id);
       setActiveSession(replacement);
       setMessages(nextMessages);
@@ -926,13 +977,24 @@ export function AssistantScreen() {
     const editTarget = !retry && editingMessageId
       ? messages.find((message) => message.id === editingMessageId && message.role === "user") ?? null
       : null;
-    if (!project || !activeSession || !content || sending) return;
-    if (retry && (retry.sessionId !== activeSession.id || !messages.some((message) => message.id === retry.userMessage.id))) {
+    if (!content || sending) return;
+    // 还没有作品或还没有会话：到这一刻（点了发送）才创建。用返回值继续 ——
+    // setState 不会同步落进这次调用的闭包，读 state 只会读到 null。
+    const ready = project && activeSession
+      ? { project, session: activeSession, messages }
+      : await ensureConversation();
+    if (!ready) return;
+    const readyProject = ready.project;
+    const readySession = ready.session;
+    // 历史用返回值里的：这一轮刚把旧会话读回来时，闭包里的 messages 还是空的，
+    // 用它当 baseHistory 会把之前聊过的内容从上下文里抹掉。
+    const readyMessages = ready.messages;
+    if (retry && (retry.sessionId !== readySession.id || !messages.some((message) => message.id === retry.userMessage.id))) {
       setRetryRequest(null);
       setError("重试消息已不在当前对话中，请重新发送");
       return;
     }
-    const sessionId = activeSession.id;
+    const sessionId = readySession.id;
     const requestId = sendRequestRef.current + 1;
     sendRequestRef.current = requestId;
     const isCurrentRequest = () => sendRequestRef.current === requestId;
@@ -954,7 +1016,7 @@ export function AssistantScreen() {
     let userMessage = retry?.userMessage ?? null;
     let nextHistory = retry?.history ?? [];
     let userMessageSaved = Boolean(userMessage);
-    let workingSession = activeSession;
+    let workingSession = readySession;
     let latestTrace: AgentRunTrace | null = null;
     let runSelection: ModelSelection | null = selection;
     try {
@@ -972,7 +1034,7 @@ export function AssistantScreen() {
         });
       }
       if (!retry) {
-        let baseHistory = messages;
+        let baseHistory = readyMessages;
         if (editTarget) {
           const editIndex = messages.findIndex((message) => message.id === editTarget.id);
           if (editIndex < 0) throw new Error("要编辑的消息不存在");
@@ -1016,7 +1078,7 @@ export function AssistantScreen() {
       const runHistory = attachmentMessage ? [...nextHistory, attachmentMessage] : nextHistory;
       const requestStartedAt = Date.now();
       const response = await runAgent({
-        project,
+        project: readyProject,
         selection: runSelection,
         history: runHistory,
         agentId: retry?.agentId ?? activeAgentId,
@@ -1059,7 +1121,7 @@ export function AssistantScreen() {
       );
       if (isCurrentRequest()) setError(friendlyError.message);
       const failedTrace = sendError instanceof AgentRunError ? sendError.trace : latestTrace;
-      const retryModelId = runSelection?.model.id ?? retry?.modelId ?? activeSession.modelId ?? "";
+      const retryModelId = runSelection?.model.id ?? retry?.modelId ?? "";
       if (userMessageSaved && userMessage) {
         try {
           const failedMessage = await addMessage(
@@ -1103,7 +1165,7 @@ export function AssistantScreen() {
     <Screen>
       <Header
         leading={(
-          <ScalePress accessibilityLabel="作品与对话" onPress={() => setDrawerVisible(true)} style={styles.iconButton}>
+          <ScalePress accessibilityLabel="作品与对话" hitSlop={{ left: 12 }} onPress={() => setDrawerVisible(true)} style={styles.headerMenuButton}>
             {/* 两条线，一长一短：与写作页左上角同一个入口画法，两页手势一致。 */}
             <View style={styles.menuGlyph}>
               <View style={[styles.menuGlyphBar, styles.menuGlyphBarLong]} />
@@ -1177,9 +1239,6 @@ export function AssistantScreen() {
               {liveTrace ? <AgentTraceView trace={liveTrace} defaultExpanded inline liveElapsedSeconds={thinkingSeconds} listAtBottomRef={atBottomRef} /> : null}
               {streamingContent ? (
                 <View style={styles.streamingBubble}>
-                  <View style={styles.messageHeader}>
-                    <Text style={styles.messageRole}>Storyloom</Text>
-                  </View>
                   <Text selectable style={[styles.messageText, chatTextStyle]}>{streamingContent}</Text>
                 </View>
               ) : null}
@@ -1276,8 +1335,9 @@ export function AssistantScreen() {
             <View style={styles.welcomeBox}>
               <Text style={styles.welcomeTitle}>聊灵感、记想法</Text>
               <View style={styles.welcomeChipsRow}>
+              {/* 建议只填进输入框：创建作品与会话留给点发送那一刻。 */}
               {["记一个灵感", "梳理一下我的想法", "随便聊聊"].map((suggestion) => (
-                <ScalePress key={suggestion} style={styles.welcomeChip} onPress={() => { void ensureConversation().then(() => setInput(suggestion)); }}>
+                <ScalePress key={suggestion} style={styles.welcomeChip} onPress={() => setInput(suggestion)}>
                   <Text style={styles.welcomeChipText}>{suggestion}</Text>
                 </ScalePress>
               ))}
@@ -1294,11 +1354,6 @@ export function AssistantScreen() {
                 const failed = item.role === "assistant" && (item.metadata?.taskStatus === "failed" || item.metadata?.agentTrace?.status === "error");
                 return (
                   <>
-              {item.role === "assistant" ? (
-                <View style={styles.messageHeader}>
-                  <Text style={styles.messageRole}>Storyloom</Text>
-                </View>
-              ) : null}
               {item.metadata?.agentTrace ? (
                 <AgentTraceView
                   trace={item.metadata.agentTrace}
@@ -1552,24 +1607,35 @@ export function AssistantScreen() {
       <BottomSheet
         visible={modelPickerVisible}
         title="选择模型"
-        subtitle="仅用于当前对话"
         onClose={() => setModelPickerVisible(false)}
       >
           <FlatList
               style={styles.panelList}
-              data={models}
+              data={models.filter((model) => model.id !== defaultModelId)}
               keyExtractor={(item) => item.id}
               ListHeaderComponent={
-                <Pressable onPress={() => void chooseModel(null)} style={[styles.sheetRow, activeSession?.modelId === null && styles.sheetRowActive]}>
-                  <Ionicons name={activeSession?.modelId === null ? "radio-button-on" : "radio-button-off"} size={20} color={activeSession?.modelId === null ? colors.primary : colors.textMuted} />
+                <Pressable
+                  onPress={() => void chooseModel(null)}
+                  style={[
+                    styles.sheetRow,
+                    (explicitModelId === null || explicitModelId === defaultModelId) && styles.sheetRowActive,
+                  ]}
+                >
+                  <Ionicons
+                    name={explicitModelId === null || explicitModelId === defaultModelId ? "radio-button-on" : "radio-button-off"}
+                    size={20}
+                    color={explicitModelId === null || explicitModelId === defaultModelId ? colors.primary : colors.textMuted}
+                  />
                   <View style={styles.sheetRowText}>
-                    <Text style={styles.sheetRowTitle}>跟随主智能体或全局模型</Text>
-                    <Text style={styles.sheetRowMeta}>{models.find((model) => model.id === defaultModelId)?.name ?? "尚未设置默认模型"}</Text>
+                    {/* 第一项代表「此刻正在用的那个模型」——下面列表已把defaultModelId 那一行
+                        剔掉，所以这里既是状态、也是名字：不再另写一行小字，
+                        同一个模型在整个面板里只出现一次。 */}
+                    <Text style={styles.sheetRowTitle}>跟随主智能体或默认模型</Text>
                   </View>
                 </Pressable>
               }
               renderItem={({ item }) => {
-                const selected = activeSession?.modelId === item.id;
+                const selected = explicitModelId === item.id;
                 const provider = providerById.get(item.providerId);
                 return (
                   <Pressable onPress={() => void chooseModel(item.id)} style={[styles.sheetRow, selected && styles.sheetRowActive]}>
@@ -1690,6 +1756,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  // 左上角那个入口单独一份，与写作页同一处理：图形贴 16dp，触摸区用 hitSlop 补回 44。
+  headerMenuButton: { width: 32, height: 44, alignItems: "flex-start", justifyContent: "center" },
   // 顶栏入口：两条线，上长下短，与写作页左上角同一套画法。
   menuGlyph: { width: 20, gap: 5 },
   menuGlyphBar: { height: 2, borderRadius: 2, backgroundColor: colors.primary },
@@ -1737,14 +1805,12 @@ const styles = StyleSheet.create({
   emptyMessages: { flexGrow: 1 },
   // 消息内间距比别处紧一档（12 → 8）：过程轨迹与正文要连成一段，不能再被空档切开。
   message: { gap: spacing.sm, paddingVertical: spacing.md },
-  messageHeader: { minHeight: 28, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
   messageEditRowOutside: { alignSelf: "flex-end", flexDirection: "row", alignItems: "center", gap: 10, marginTop: 2, paddingRight: 2 },
   messageEditButton: { minHeight: 32, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.xs },
   messageTime: { color: colors.textMuted, fontSize: 12 },
   messageEditText: { color: colors.textMuted, fontSize: 13, fontWeight: "700" },
   userMessage: { alignSelf: "flex-end", maxWidth: "88%", paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceMuted },
   assistantMessage: {},
-  messageRole: { color: colors.primary, fontSize: 12, fontWeight: "700" },
   messageText: { color: colors.text, fontSize: 16, lineHeight: 24 },
   failureCard: { alignSelf: "flex-start", flexShrink: 1, maxWidth: "88%", minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderWidth: 1, borderColor: "#E4B4AE", borderRadius: radius.sm, backgroundColor: "#FFF4F2" },
   failureTitle: { color: colors.danger, fontSize: 13, fontWeight: "700" },

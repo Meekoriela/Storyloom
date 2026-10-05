@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 
-import { BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, Field, Header, PlainScrollView, ScalePress, Screen } from "@/components/ui";
+import { BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, ExpandableField, Field, Header, PlainScrollView, ScalePress, Screen } from "@/components/ui";
 import {
   createStyleProfileVersion,
   deleteStyleProfile,
@@ -518,12 +518,7 @@ export function StyleLibraryScreen() {
       >
             <PlainScrollView style={styles.sheetScroll} contentContainerStyle={styles.profileContent}>
               {selectedProfile?.kind === "author" && editingAuthorGuide ? (
-                <View style={styles.longInputWrap}>
-                  <Field label="作者文风指南" value={authorGuide} onChangeText={setAuthorGuide} multiline textAlignVertical="top" style={[styles.guideInput, !guideExpanded && styles.longInputClamp]} maxLength={100000} />
-                  <ScalePress accessibilityLabel={guideExpanded ? "收起指南" : "展开指南"} onPress={() => setGuideExpanded((value) => !value)} hitSlop={8} style={styles.longInputToggle}>
-                    <Ionicons name={guideExpanded ? "chevron-up" : "chevron-down"} size={18} color={colors.textMuted} />
-                  </ScalePress>
-                </View>
+                <ExpandableField label="作者文风指南" value={authorGuide} onChangeText={setAuthorGuide} expanded={guideExpanded} onToggle={() => setGuideExpanded((value) => !value)} maxLength={100000} />
               ) : (
                 <Text selectable style={styles.guideText}>{selectedProfile?.guide}</Text>
               )}
@@ -596,18 +591,24 @@ function ProfileRow({
   inset?: boolean;
 }) {
   return (
-    <View style={[styles.profileRow, inset && styles.profileRowInset, active && styles.profileRowActive]}>
-      <Pressable onPress={onPress} style={styles.profileMain}>
-        <Ionicons name={active ? "checkmark-circle" : "document-text-outline"} size={20} color={active ? colors.primary : colors.textMuted} />
-        <View style={styles.profileCopy}>
-          <Text style={styles.profileName} numberOfLines={1}>{profile.name} V{profile.version}</Text>
-          <Text style={styles.profileMeta} numberOfLines={2}>{profile.guide.slice(0, 120).replace(/\s+/g, " ")}</Text>
-          {sourceLabel ? <Text style={styles.profileSource} numberOfLines={1}>{sourceLabel}</Text> : null}
-        </View>
-      </Pressable>
-      <Pressable accessibilityLabel={active ? "当前使用的文风" : "使用这个文风"} onPress={onActivate} disabled={disabled || active} style={styles.useButton}>
-        <Text style={[styles.useButtonText, active && styles.useButtonTextActive]}>{active ? "使用中" : "使用"}</Text>
-      </Pressable>
+    <View style={[styles.profileRowWrap, inset && styles.profileRowInset]}>
+      <View style={styles.profileRow}>
+        <Pressable onPress={onPress} style={styles.profileMain}>
+          <Ionicons name={active ? "checkmark-circle" : "document-text-outline"} size={20} color={active ? colors.primary : colors.textMuted} />
+          <View style={styles.profileCopy}>
+            <Text style={[styles.profileName, active && styles.profileNameActive]} numberOfLines={1}>{profile.name} V{profile.version}</Text>
+            <Text style={styles.profileMeta} numberOfLines={2}>{profile.guide.slice(0, 120).replace(/\s+/g, " ")}</Text>
+            {sourceLabel ? <Text style={styles.profileSource} numberOfLines={1}>{sourceLabel}</Text> : null}
+          </View>
+        </Pressable>
+        <Pressable accessibilityLabel={active ? "当前使用的文风" : "使用这个文风"} onPress={onActivate} disabled={disabled || active} style={styles.useButton}>
+          <Text style={[styles.useButtonText, active && styles.useButtonTextActive, disabled && !active && styles.useButtonTextDisabled]}>{active ? "使用中" : "使用"}</Text>
+        </Pressable>
+      </View>
+      {/* 按钮被禁用时把原因写在行下：原先点了没反应，也不说为什么。 */}
+      {disabled && !active ? (
+        <Text style={styles.profileDisabledHint}>请先从书架打开一部作品</Text>
+      ) : null}
     </View>
   );
 }
@@ -641,18 +642,23 @@ const styles = StyleSheet.create({
   sourceCopy: { flex: 1, minWidth: 0, gap: 3 },
   sourceTitle: { color: colors.text, fontSize: 16, fontWeight: "700" },
   sourceMeta: { color: colors.textMuted, fontSize: 12 },
-  // 左侧 12dp 内边距与这套边框是一套，要动就连内边距一起理。
-  profileRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm, paddingLeft: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.surface },
+  // 行内左侧留 12dp：图标与文字的起点，与其它页的列表行一致。
+  // 底部外边距放在外层：行下面还要跟一行禁用说明，两行一起参与行间距。
+  profileRowWrap: { marginBottom: spacing.sm },
   profileRowInset: { marginHorizontal: spacing.lg },
-  profileRowActive: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
+  profileRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingLeft: spacing.md },
   profileMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm },
   profileCopy: { flex: 1, minWidth: 0, gap: 3 },
   profileName: { color: colors.text, fontSize: 14, fontWeight: "700" },
+  // 当前生效只用绿色勾与绿色标题表示，不再铺底色与边框。
+  profileNameActive: { color: colors.primary },
   profileMeta: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
   profileSource: { color: colors.textMuted, fontSize: 11 },
+  profileDisabledHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18, paddingLeft: spacing.md, paddingTop: 2 },
   useButton: { minWidth: 54, minHeight: 44, alignItems: "center", justifyContent: "center", marginRight: spacing.xs },
   useButtonText: { color: colors.primary, fontSize: 13, fontWeight: "700" },
   useButtonTextActive: { color: colors.textMuted },
+  useButtonTextDisabled: { color: colors.textMuted },
   // 父层只有 maxHeight，ScrollView 默认不收缩会把超出部分顶出可视区且滚不动，必须允许它收缩。
   sheetScroll: { flexShrink: 1 },
   sheetContent: { gap: spacing.md, paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
@@ -669,11 +675,6 @@ const styles = StyleSheet.create({
   checkpointText: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
   emptyHint: { color: colors.textMuted, fontSize: 14, lineHeight: 21, paddingVertical: spacing.md },
   guideText: { color: colors.text, fontSize: 14, lineHeight: 21 },
-  guideInput: { minHeight: 300 },
-  // 收起态给个上限，长指南不再一路长高把按钮顶出去；摊开后不限高，由弹层滚动承接。
-  longInputClamp: { maxHeight: 320 },
-  longInputWrap: { position: "relative" },
-  longInputToggle: { position: "absolute", top: 0, right: 0, width: 32, height: 24, alignItems: "center", justifyContent: "center" },
   // 按钮行已挪出滚动区，底部留白改由它自己承担（另一处 inlineActions 不受影响）。
   profileActionsBar: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, marginTop: spacing.sm },
 });

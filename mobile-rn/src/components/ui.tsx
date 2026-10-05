@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Animated,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Modal,
   Pressable,
   ScrollView,
@@ -64,6 +65,76 @@ export function Field({ label, style, ...props }: TextInputProps & { label: stri
       <Text style={styles.label}>{label}</Text>
       {/* 用数组合并样式：调用方传 style 时只做覆盖（例如多行高度），不会丢掉输入框自己的边框与内边距 */}
       <TextInput placeholderTextColor={colors.textMuted} {...props} style={[styles.input, style]} />
+    </View>
+  );
+}
+
+/**
+ * 长文本字段：收起时是只读预览，展开后才变成可编辑的输入框。
+ *
+ * 收起态用只读文本，不用"限高的输入框"：多行输入框在 Android 上遇到预置的长文本会
+ * 把内部滚动位置落到光标处（也就是末尾），一打开就停在最后一段、要往上翻。只读文本
+ * 没有滚动位置这回事，永远从第一行显示。
+ *
+ * 两态的高度差走 LayoutAnimation：切换时是过渡，不是一帧跳完。新架构下
+ * `UIManager.setLayoutAnimationEnabledExperimental` 已是空操作，不需要那行开关。
+ */
+export function ExpandableField({
+  label,
+  value,
+  onChangeText,
+  expanded,
+  onToggle,
+  placeholder,
+  maxLength,
+  previewLines = 4,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (next: string) => void;
+  expanded: boolean;
+  onToggle: () => void;
+  placeholder?: string;
+  maxLength?: number;
+  /** 收起态显示几行预览，默认 4 行。 */
+  previewLines?: number;
+}) {
+  const toggle = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    onToggle();
+  };
+  return (
+    <View style={[styles.field, styles.expandableField]}>
+      <Text style={styles.label}>{label}</Text>
+      {expanded ? (
+        <TextInput
+          multiline
+          maxLength={maxLength}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={colors.textMuted}
+          style={[styles.input, styles.expandableOpen]}
+          textAlignVertical="top"
+          value={value}
+        />
+      ) : (
+        /* 收起态是只读预览：整块不可点，展开与收起统一由右侧那颗箭头负责。 */
+        <View style={[styles.input, styles.expandablePreview]}>
+          {value.trim() ? (
+            <Text numberOfLines={previewLines} style={styles.expandablePreviewText}>{value}</Text>
+          ) : (
+            <Text numberOfLines={1} style={styles.expandablePreviewEmpty}>{placeholder ?? "点这里填写"}</Text>
+          )}
+        </View>
+      )}
+      <ScalePress
+        accessibilityLabel={expanded ? `收起${label}` : `展开${label}`}
+        hitSlop={8}
+        onPress={toggle}
+        style={styles.expandableToggle}
+      >
+        <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={18} color={colors.textMuted} />
+      </ScalePress>
     </View>
   );
 }
@@ -727,6 +798,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
+  // 长文本字段两态：收起 120（四行预览，行高 22），展开最高 320、超出在框内滚。
+  expandableField: { position: "relative" },
+  expandableToggle: { position: "absolute", top: 0, right: 0, width: 32, height: 24, alignItems: "center", justifyContent: "center" },
+  expandablePreview: { minHeight: 120 },
+  expandableOpen: { minHeight: 120, maxHeight: 320 },
+  expandablePreviewText: { color: colors.text, fontSize: 16, lineHeight: 22 },
+  expandablePreviewEmpty: { color: colors.textMuted, fontSize: 16 },
   button: {
     minHeight: 44,
     minWidth: 44,
