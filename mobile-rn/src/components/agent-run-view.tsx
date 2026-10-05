@@ -40,15 +40,23 @@ const MONO_FONT = Platform.select({ ios: "Menlo", android: "monospace", default:
  * 这样"执行完成"那一行一眼就大于下面每一次调用，不会出现二级比三级小的倒挂。
  * 失败叉的尺寸跟着同档直径走（13 / 12 / 10），不另定一套数。
  *
- * 行里不再另放图标 —— 在干什么由那一行的文字说（工具名、技能名、提问），
+ * 二级（`level === "sub"`）不用圆圈，按 `variant` 给两个不同图标：
+ * 思考段是灯泡、调用组是终端 —— 圆圈只表达层级，图标额外说明这一组在干什么。
+ * 图标与原来的圆环同宽（12），所以缩进与行高都不受影响。
+ * 一级保留实心点：它兼状态（跑着转圈、失败变叉），换成图标反而丢状态。
+ *
+ * 行里不再另放类型图标 —— 在干什么由那一行的文字说（工具名、技能名、提问），
  * 图形再说一遍就是同一件事写两遍。
  */
 function TraceNode({
   status,
   level = "child",
+  variant = "tool",
 }: {
   status: AgentTraceEventStatus;
   level?: "lead" | "sub" | "child";
+  /** 二级用哪个图标；一级与三级忽略。 */
+  variant?: "thinking" | "tool";
 }) {
   if (status === "running" || status === "waiting") {
     return <ActivityIndicator size="small" color={colors.primary} />;
@@ -58,7 +66,9 @@ function TraceNode({
     return <Ionicons name="close" size={size} color={colors.danger} />;
   }
   if (level === "lead") return <View style={styles.nodeLead} />;
-  if (level === "sub") return <View style={[styles.nodeSub, styles.nodeSubHollow]} />;
+  if (level === "sub") {
+    return <Ionicons name={variant === "thinking" ? "bulb-outline" : "terminal-outline"} size={12} color={colors.textMuted} />;
+  }
   return <View style={[styles.nodeChild, styles.nodeChildHollow]} />;
 }
 
@@ -119,6 +129,9 @@ function EventPayload({ label, value }: { label: string; value: string }) {
  *
  * 折叠：跑动时展开（正在写的东西要看得见），跑完收起（下面挂着的行自己会说话）。
  * 收起时标题带项数，一眼知道下面有几件事。
+ *
+ * 行首是终端图标 —— 与思考段的灯泡区分开，两者同为第二级，靠图标说明各自在干什么。
+ * 展开箭头紧跟标题，不推到行末。
  */
 function TraceEventGroup({ events }: { events: AgentTraceEvent[] }) {
   const running = events.some((event) => event.status === "running" || event.status === "waiting");
@@ -147,7 +160,6 @@ function TraceEventGroup({ events }: { events: AgentTraceEvent[] }) {
           {label}
           {events.length > 1 ? ` · ${events.length} 项` : ""}
         </Text>
-        <View style={styles.groupSpacer} />
         <Ionicons name={open ? "chevron-up" : "chevron-down"} size={17} color={colors.textMuted} />
       </Pressable>
       {open ? events.map((event) => <TraceEventRow key={event.id} event={event} />) : null}
@@ -207,7 +219,10 @@ function TraceEventRow({ event }: { event: AgentTraceEvent }) {
  *
  * 折叠：跑动时展开（内容正在往里写，折叠起来等于什么都看不到），跑完收起 —— 思考正文
  * 通常是这一轮里最长的一段，常驻会把下面的调用推离视线。
- * 收起时标题带**本段**字数；组头那个是全轮字数，两处不是同一件事，所以可以并存。
+ *
+ * 行首是灯泡图标，与调用组的终端区分开；两者同为第二级。**标题不带本段字数** ——
+ * 合计字数由组头那一处说一次就够了，两处各报一遍是同一件事说两遍。
+ * 展开箭头紧跟标题，不推到行末。
  */
 export function ReasoningSegment({ text, live }: { text: string; live?: boolean }) {
   const [open, setOpen] = useState(Boolean(live));
@@ -218,7 +233,6 @@ export function ReasoningSegment({ text, live }: { text: string; live?: boolean 
     previousLive.current = isLive;
     if (changed) setOpen(isLive);
   }, [live]);
-  const chars = text.trim().length;
   return (
     <View style={styles.reasoningSegment}>
       <Pressable
@@ -229,13 +243,11 @@ export function ReasoningSegment({ text, live }: { text: string; live?: boolean 
         style={styles.reasoningSegmentHeader}
       >
         <View style={styles.nodeSlotSub}>
-          <TraceNode status={live ? "running" : "completed"} level="sub" />
+          <TraceNode status={live ? "running" : "completed"} level="sub" variant="thinking" />
         </View>
         <Text style={[styles.reasoningSegmentTitle, live && styles.reasoningSegmentTitleLive]}>
           {live ? "思考中" : "思考过程"}
         </Text>
-        <View style={styles.groupSpacer} />
-        {!live && chars ? <Text style={styles.reasoningSegmentCount}>{chars} 字</Text> : null}
         <Ionicons name={open ? "chevron-up" : "chevron-down"} size={17} color={colors.textMuted} />
       </Pressable>
       {open ? (
@@ -627,14 +639,13 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   //   第一级（组头）      paddingLeft 0 + nodeSlotLead 14 ⇒ 文字 22
   //   第二级（思考/执行完成）paddingLeft 8 + nodeSlotSub 12  ⇒ 文字 28
   //   第三级（一次调用）   paddingLeft 16 + nodeSlotChild 10 ⇒ 文字 34
-  // 节点直径三档 **14 / 12 / 10**，二级比三级大 2dp —— 层级只能靠直径递进，
-  // 出现二级小于三级就等于把层级说反了。形态：一级实心，二三级空心圈。
-  // 描边与节点分开两个样式，是为了失败时能只换描边颜色而不动直径。
+  // 节点直径三档 **14 / 12 / 10**，二级比三级大 2dp —— 出现二级小于三级就等于把层级说反了。
+  // 形态：一级实心点，二级用图标（灯泡 / 终端），三级空心圈。二级图标是 12 的 Ionicons，
+  // 与 `nodeSlotSub` 同宽，所以缩进与行高都不受换图影响。
+  // 三级那个圆环描边与节点分开两个样式，是为了失败时能只换描边颜色而不动直径。
   nodeSlotLead: { width: 14, alignItems: "center", justifyContent: "center" },
   nodeLead: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.primary },
   nodeSlotSub: { width: 12, alignItems: "center", justifyContent: "center" },
-  nodeSub: { width: 12, height: 12, borderRadius: 6 },
-  nodeSubHollow: { borderWidth: 1.5, borderColor: colors.textMuted },
   nodeSlotChild: { width: 10, alignItems: "center", justifyContent: "center" },
   nodeChild: { width: 10, height: 10, borderRadius: 5 },
   nodeChildHollow: { borderWidth: 1.5, borderColor: colors.textMuted },
@@ -661,7 +672,6 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   groupTitle: { flexShrink: 1, color: colors.text, fontSize: 13 },
-  groupSpacer: { flex: 1 },
   collaborationNotice: {
     minHeight: 34,
     flexDirection: "row",
@@ -677,7 +687,6 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   reasoningSegmentHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 42, paddingLeft: 8 },
   reasoningSegmentTitle: { flexShrink: 1, color: colors.text, fontSize: 13 },
   reasoningSegmentTitleLive: { color: colors.primary },
-  reasoningSegmentCount: { flexShrink: 0, color: colors.textMuted, fontSize: 12 },
   reasoningSegmentText: { color: colors.textMuted, fontSize: 13, lineHeight: 20 },
   reasoningSegmentBody: { marginTop: spacing.xs, paddingLeft: 28 },
   // 第三级：具体的一次调用。行高与上面两级一致，层级只靠缩进，不靠尺寸。

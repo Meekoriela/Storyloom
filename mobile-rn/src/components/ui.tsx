@@ -23,8 +23,18 @@ import { KeyboardAwareScrollView, KeyboardAvoidingView as KeyboardAvoider } from
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { colors, radius, spacing, themedStyles } from "@/theme";
+import { useAppearance } from "@/theme-context";
 
+/**
+ * 每一屏的外壳。
+ *
+ * 订阅一次外观档位：样式表是由 `themedStyles` 的 Proxy 惰性重建的，而 Proxy 只在**读到
+ * 样式键**时才重建，不会主动让界面重绘。所以不订阅的话，静止不重渲染的屏（编辑页就是）
+ * 切档位后会停在旧配色，要碰一下才反应过来。助手页因为有每秒的计时在跑、一直在重渲染，
+ * 所以看不出这个问题 —— 不是它订阅了，是它一直在动。
+ */
 export function Screen({ children, scroll = false }: PropsWithChildren<{ scroll?: boolean }>) {
+  useAppearance();
   return (
     <SafeAreaView style={styles.screen} edges={["top"]}>
       {scroll ? (

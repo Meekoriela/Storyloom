@@ -1,10 +1,18 @@
 /**
- * 自制内容包：把用户自己创建的规则 / 技能 / 智能体导出为 JSON，并在另一台设备上导入。
+ * 自制内容包：把 Storyloom 自带的写作方法与用户自己创建的规则 / 技能 / 智能体
+ * 导出为 JSON，并在另一台设备上导入。
  *
- * 只导出 `source === "custom"` 的条目——内置、插件与远程内容包的代码不属于用户创作，
- * 导出它们既没意义，也有把上游内容重新分发的许可风险。
+ * 导出范围：
+ * - 用户自建（`source === "custom"`）—— 导出它们才是内容包的本意；
+ * - **Storyloom 自带的**那批（id 以 `storyloom-skill--` / `storyloom-agent--` 开头）——
+ *   它们是本项目的代码，随应用分发，导出无许可问题。少了这一批，包里只有三个空数组，
+ *   拿到手是空的。
+ *
+ * 排除的是上游内容：插件、远程包、基础内容包里除 Storyloom 之外的条目 —— 那些是别人的东西，
+ * 导出它们有重新分发的许可风险。
  *
  * 导入策略：同 id 覆盖、其余保留；导入前列出冲突项，由调用方确认后再写入。
+ * Storyloom 自带的那批在导入时**跳过**：对方的应用本来也自带一份，写进去会变成重复条目。
  */
 import * as DocumentPicker from "expo-document-picker";
 import { Directory, File, Paths } from "expo-file-system";
@@ -25,6 +33,14 @@ import {
 const PACK_FORMAT = "storyloom-content-pack";
 const PACK_VERSION = 1;
 
+/** Storyloom 自带那批的 id 前缀；它们随应用分发，导入时跳过。 */
+const STORYLOOM_SKILL_PREFIX = "storyloom-skill--";
+const STORYLOOM_AGENT_PREFIX = "storyloom-agent--";
+
+function isStoryloomBuiltinId(id: string): boolean {
+  return id.startsWith(STORYLOOM_SKILL_PREFIX) || id.startsWith(STORYLOOM_AGENT_PREFIX);
+}
+
 export interface ContentPack {
   format: typeof PACK_FORMAT;
   version: number;
@@ -43,14 +59,25 @@ export interface ContentPackPreview {
   pack: ContentPack;
   /** 与本地同 id 的条目数，用于提示用户"导入会覆盖这些" */
   conflicts: number;
+  /** 包里带的 Storyloom 自带条目数：这些导入时跳过（对方应用本来也有）。 */
+  builtinSkipped: number;
 }
 
-/** 打包用户自建内容并调起系统分享。 */
+/**
+ * 打包内容并调起系统分享。
+ *
+ * 判空放在写盘与分享**之前**：先前是先写文件、先弹分享面板，再由调用方判空，于是用户在
+ * 分享面板里打开文件看到的是三个空数组，关掉面板才看到提示 —— 看起来像导出坏了。
+ */
 export async function exportContentPack(title: string): Promise<ContentPackSummary> {
   const [rules, skills, agents] = await Promise.all([getAgentRules(), getAgentSkills(), getAgentDefinitions()]);
   const customRules = rules.filter((item) => item.id.startsWith("custom") || !isBuiltinId(item.id));
-  const customSkills = skills.filter((item) => item.source === "custom");
-  const customAgents = agents.filter((item) => item.source === "custom");
+  // 自建 + Storyloom 自带：只排除插件、远程与上游内容包里那部分。
+  const exportableSkills = skills.filter((item) => item.source === "custom" || item.source === "builtin");
+  const exportableAgents = agents.filter((item) => item.source === "custom" || item.source === "builtin");
+  // 上游基础内容包的条目 id 不带 Storyloom 前缀，剔除它们，只留自带那批。
+  const customSkills = exportableSkills.filter((item) => item.source === "custom" || isStoryloomBuiltinId(item.id));
+  const customAgents = exportableAgents.filter((item) => item.source === "custom" || isStoryloomBuiltinId(item.id));
 
   const pack: ContentPack = {
     format: PACK_FORMAT,
@@ -60,6 +87,9 @@ export async function exportContentPack(title: string): Promise<ContentPackSumma
     skills: customSkills,
     agents: customAgents,
   };
+  const count = pack.rules.length + pack.skills.length + pack.agents.length;
+  if (count === 0) return { count: 0, sizeBytes: 0 };
+
   const payload = JSON.stringify(pack, null, 2);
 
   const directory = new Directory(Paths.cache, "content-packs");
@@ -70,10 +100,7 @@ export async function exportContentPack(title: string): Promise<ContentPackSumma
 
   if (!(await Sharing.isAvailableAsync())) throw new Error("当前设备不支持系统分享，请稍后重试");
   await Sharing.shareAsync(file.uri, { mimeType: "application/json", dialogTitle: "导出内容包" });
-  return {
-    count: customRules.length + customSkills.length + customAgents.length,
-    sizeBytes: payload.length,
-  };
+  return { count, sizeBytes: payload.length };
 }
 
 /** 选择内容包文件；取消时返回 null。 */
@@ -90,16 +117,27 @@ export async function previewContentPack(source: File): Promise<ContentPackPrevi
   const conflicts = pack.rules.filter((item) => rules.some((local) => local.id === item.id)).length
     + pack.skills.filter((item) => skills.some((local) => local.id === item.id)).length
     + pack.agents.filter((item) => agents.some((local) => local.id === item.id)).length;
-  return { pack, conflicts };
+  const builtinSkipped = pack.skills.filter((item) => isStoryloomBuiltinId(item.id)).length
+    + pack.agents.filter((item) => isStoryloomBuiltinId(item.id)).length;
+  return { pack, conflicts, builtinSkipped };
 }
 
-/** 写入内容包：同 id 覆盖，其余保留。 */
+/**
+ * 写入内容包：同 id 覆盖，其余保留。
+ *
+ * Storyloom 自带的那批先剔除再合并 —— 它们的 id 已在托管集合里（`saveAgentSkills` 对托管 id
+ * 只写 `{ id, enabled }`），写进去会把 `instructions` 丢掉；而对方应用本来也自带一份，
+ * 正确做法是跳过。
+ */
 export async function applyContentPack(pack: ContentPack): Promise<ContentPackSummary> {
   const [rules, skills, agents] = await Promise.all([getAgentRules(), getAgentSkills(), getAgentDefinitions()]);
-  await saveAgentRules(mergeById(rules, pack.rules));
-  await saveAgentSkills(mergeById(skills, pack.skills));
-  await saveAgentDefinitions(mergeById(agents, pack.agents));
-  return { count: pack.rules.length + pack.skills.length + pack.agents.length, sizeBytes: 0 };
+  const incomingRules = pack.rules.filter((item) => !isStoryloomBuiltinId(item.id));
+  const incomingSkills = pack.skills.filter((item) => !isStoryloomBuiltinId(item.id));
+  const incomingAgents = pack.agents.filter((item) => !isStoryloomBuiltinId(item.id));
+  await saveAgentRules(mergeById(rules, incomingRules));
+  await saveAgentSkills(mergeById(skills, incomingSkills));
+  await saveAgentDefinitions(mergeById(agents, incomingAgents));
+  return { count: incomingRules.length + incomingSkills.length + incomingAgents.length, sizeBytes: 0 };
 }
 
 function mergeById<T extends { id: string }>(local: T[], incoming: T[]): T[] {

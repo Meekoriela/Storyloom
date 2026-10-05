@@ -8,6 +8,25 @@ Important changes to this project. Format based on [Keep a Changelog](https://ke
 
 ---
 
+## [0.1.43] — 2026-10-05
+
+### Added
+
+- **Abstraction-layer alignment**: a verification skill that aligns five layers — Pitch (premise) → Structure → Scenes → Entities → Prose. Four detection paths each check one thing (does every premise element reach the structure, every structure node reach the scenes, are the characters and settings of a scene registered, does the prose deliver the settings), and deviation takes four forms (level-jump / missing link / drift / redundancy); detection runs top-down, one layer at a time. The relation between layers is **one-way traceability** — any paragraph of prose should be able to name the scene it serves, but not the reverse. Every disposition is reported, never edited away; when prose and premise disagree, first establish whether the premise was changed before deciding whether to go back up or rewrite this layer. The library had a producing skill for each layer (outline, beat sheet, world info, prose) but none checking whether the layers agree
+
+### Fixed
+
+- **The second level of the run trace swaps its rings for two distinct icons**: a light bulb for reasoning, a terminal for the tool groups. Both levels were rings before, distinguishable only by indentation, so it was not obvious at a glance which group did what. The icons are as wide as the rings they replace — marker diameters, indentation and line heights are unchanged; the group header keeps its solid dot (it also carries state: spinning while running, a cross on failure)
+- **The expand arrow now sits right after the heading**: on those two rows the arrow was pushed to the end of the line by a flex spacer, the opposite of the reference
+- **The reasoning row no longer shows its own word count**: the total is stated once on the "completed" row; reporting it in both places says the same thing twice
+- **The shelf plank glowed white in dark mode**: the plank is a light-wood image whose brightness is baked into the pixels, so it never darkened. A tone overlay that follows the active theme now sits on top of it (nearly invisible in the light theme) instead of replacing the asset
+- **After switching to always-dark or always-light, the writing page only changed colour once you touched it**: the style sheet is rebuilt on demand, but rebuilding does not repaint, so a screen that does not re-render while idle stays on the old palette. The assistant page runs a per-second timer and re-renders constantly, which is why the problem never showed there. Every screen's shell now subscribes to the theme once
+- **Exporting a content pack produced an empty one**: the pack only collected user-created entries, and most entries had never been edited, so the export was three empty arrays; and an empty pack still raised the share sheet first, so the file was already open showing empty arrays before the notice appeared. Storyloom's own writing-method entries are now exported as well (upstream content packs remain excluded), and emptiness is checked before writing and sharing — an empty pack no longer raises the sheet
+- **Importing a content pack reported items it was not going to import**: the built-in entries in a pack are skipped on import (the other install ships its own copy, and writing one in would lose the instruction text), so the confirmation now says how many will be skipped and the completion notice reports the actual imported count
+- **The mascot's description gains a sentence**: long-press to drag
+
+---
+
 ## [0.1.42] — 2026-10-05
 
 ### Added

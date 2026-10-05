@@ -753,7 +753,12 @@ function coverColor(title: string): string {
                   source={PLANK_IMAGE}
                   resizeMode="stretch"
                   style={{ position: "absolute", left: -60, right: -60, bottom: 0, height: plankStrip }}
-                />
+                >
+                  {/* 层板的木纹亮度是烘进 PNG 像素的（浅木色，深色档下也不变暗），
+                      所以在它上面叠一层档位色罩：浅色档这层近乎透明，深色档压暗木纹。
+                      不换资源文件 —— 换一张就要同时接进备份，且木纹的高光会一并丢掉。 */}
+                  <View style={styles.plankShade} />
+                </ImageBackground>
                 <View style={[styles.shelfBooks, { paddingBottom: plankBelow, gap: cellGap }]}>
                   {row.map((project) => {
                     const lines = bookTitleLines(project.title);
@@ -815,7 +820,10 @@ function coverColor(title: string): string {
                     source={PLANK_IMAGE}
                     resizeMode="stretch"
                     style={{ position: "absolute", left: -60, right: -60, bottom: 0, height: spinePlankHeight }}
-                  />
+                  >
+                    {/* 与网格同一套色罩，理由见网格那处。 */}
+                    <View style={styles.plankShade} />
+                  </ImageBackground>
                   <View style={styles.spineBooks}>
                     {row.map((project, index) => {
                       const { width, height, lean, marginLeft } = spineLayoutAt(row, index, spineCharacters, spineMaxWidth);
@@ -1112,6 +1120,8 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   statsText: { flex: 1, color: colors.textMuted, fontSize: 10.5 },
   headerActions: { flexDirection: "row", alignItems: "center" },
   shelfRow: { paddingHorizontal: 14, marginBottom: 2 },
+  /** 层板色罩：浅色档近乎无感，深色档压暗那张浅木色的板。必须绝对定位铺满，自身不参与布局。 */
+  plankShade: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: colors.overlaySoft },
   shelfBooks: { flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 6 },
   shelfCell: { alignItems: "center" },
   bookObject: { width: "100%", aspectRatio: 3 / 4, borderRadius: 2, overflow: "hidden", justifyContent: "center" },

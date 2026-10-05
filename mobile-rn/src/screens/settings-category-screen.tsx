@@ -491,7 +491,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     try {
       const summary = await exportContentPack("storyloom-content-pack");
       if (summary.count === 0) {
-        showNotice("没有可导出的内容：内容包仅导出用户自行创建的规则、技能与智能体，内置内容不参与导出。");
+        showNotice("没有可导出的内容。");
         return;
       }
       showNotice(`导出完成：共 ${summary.count} 项，请在分享面板中选择保存位置。`);
@@ -520,6 +520,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
       return;
     }
     const total = preview.pack.rules.length + preview.pack.skills.length + preview.pack.agents.length;
+    const importable = total - preview.builtinSkipped;
     if (total === 0) {
       showNotice("内容包为空：该文件不含可导入的条目。");
       return;
@@ -527,7 +528,8 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     setConfirmRequest({
       title: "导入内容包",
       message: `共 ${total} 项（规则 ${preview.pack.rules.length} · 技能 ${preview.pack.skills.length} · 智能体 ${preview.pack.agents.length}）`
-        + `${preview.conflicts > 0 ? `，其中 ${preview.conflicts} 项会覆盖本地同名条目` : ""}。确定导入吗？`,
+        + `${preview.conflicts > 0 ? `，其中 ${preview.conflicts} 项会覆盖本地同名条目` : ""}`
+        + `${preview.builtinSkipped > 0 ? `；其中 ${preview.builtinSkipped} 项是应用自带内容，本机已自带，将跳过` : ""}。确定导入吗？`,
       confirmLabel: "导入",
       danger: true,
       onConfirm: () => {
@@ -536,7 +538,9 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
           try {
             await applyContentPack(preview.pack);
             await load();
-            showNotice(`导入完成：已导入 ${total} 项。`);
+            showNotice(preview.builtinSkipped > 0
+              ? `导入完成：已导入 ${importable} 项，跳过 ${preview.builtinSkipped} 项应用自带内容。`
+              : `导入完成：已导入 ${importable} 项。`);
           } catch (error) {
             setError(error instanceof Error ? error.message : String(error));
           } finally {
@@ -1214,7 +1218,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
       ) : null}
       {category === "mascot" ? (
         <View style={styles.section}>
-          <Text style={styles.sectionHint}>颜色跟随主题色。</Text>
+          <Text style={styles.sectionHint}>颜色跟随主题色。长按可拖动。</Text>
           <ToggleRow label="显示吉祥物" value={mascotEnabled} onChange={(value) => { setMascotEnabled(value); void savePreference("general.mascotEnabled", value ? "true" : "false", (v) => setMascotEnabled(v === "true")); }} />
           <Text style={styles.subsectionTitle}>形象</Text>
           <View style={styles.mascotGrid}>
