@@ -33,7 +33,7 @@ import { SettingsCategoryScreen, SettingRow, ToggleRow, type SettingsCategory } 
 import { guessModelCapabilities } from "@/settings/model-capabilities";
 import { CONTEXT_WINDOW_KEY } from "@/agent/context-usage";
 import { useAppStore } from "@/store/app-store";
-import { colors, radius, spacing } from "@/theme";
+import { colors, radius, spacing, themedStyles } from "@/theme";
 import type { Model, Provider, ProviderType } from "@/types";
 import { FreeModelsScreen } from "@/screens/free-models-screen";
 
@@ -117,6 +117,7 @@ const settingsGroups: Array<{
     title: "基础",
     items: [
       { id: "editor", label: "编辑器", icon: "text-outline" },
+      { id: "appearance", label: "外观", icon: "contrast-outline" },
       { id: "mascot", label: "吉祥物", icon: "paw-outline" },
     ],
   },
@@ -1008,14 +1009,14 @@ export function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   categoryList: { paddingVertical: spacing.sm },
   groupHeader: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xs },
   groupTitle: { color: colors.textMuted, fontSize: 13, fontWeight: "700" },
   groupHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: 2 },
   categoryRow: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   categoryRowPressed: { backgroundColor: colors.surfaceMuted },
-  categoryIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: "#E6F3EF" },
+  categoryIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primarySoft },
   categoryTextWrap: { flex: 1 },
   categoryLabel: { color: colors.text, fontSize: 16, fontWeight: "600" },
   section: { padding: spacing.lg, gap: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
@@ -1031,7 +1032,7 @@ const styles = StyleSheet.create({
   segmentTextActive: { color: colors.primary },
   presetRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   presetChip: { minHeight: 36, justifyContent: "center", paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: 999 },
-  presetChipActive: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
+  presetChipActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   presetChipText: { color: colors.textMuted, fontSize: 13, fontWeight: "600" },
   presetChipTextActive: { color: colors.primary },
   advancedToggle: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: spacing.xs },
@@ -1042,11 +1043,11 @@ const styles = StyleSheet.create({
   advancedSheetBody: { flexShrink: 1, paddingHorizontal: spacing.lg, paddingTop: spacing.md },
   advancedSheetContent: { gap: spacing.md },
   toggleRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, paddingHorizontal: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md },
-  toggleRowOn: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
+  toggleRowOn: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   toggleText: { flex: 1, color: colors.text, fontSize: 13, lineHeight: 20 },
   defaultCard: { margin: spacing.md, marginBottom: spacing.sm, backgroundColor: colors.primary, borderRadius: radius.lg, padding: spacing.lg },
   defaultCardLabel: { color: "rgba(255,255,255,0.75)", fontSize: 10, letterSpacing: 1, marginBottom: 4 },
-  defaultCardName: { color: "#FFFFFF", fontSize: 19, fontWeight: "800" },
+  defaultCardName: { color: colors.onPrimary, fontSize: 19, fontWeight: "800" },
   defaultCardPro: { color: "rgba(255,255,255,0.85)", fontSize: 11, marginTop: 3 },
   addModelRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   btnrow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
@@ -1067,10 +1068,10 @@ const styles = StyleSheet.create({
   fieldHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: -spacing.sm },
   providerChoices: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   choice: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md },
-  choiceActive: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
+  choiceActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   choiceText: { color: colors.textMuted, fontSize: 13 },
   choiceTextActive: { color: colors.primary, fontWeight: "700" },
   modelFilterWrap: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
   modelFilterEmpty: { padding: spacing.lg, color: colors.textMuted, fontSize: 14, lineHeight: 21 },
   remoteModelRow: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.lg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-});
+}));

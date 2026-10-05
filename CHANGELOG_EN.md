@@ -8,6 +8,26 @@ Important changes to this project. Format based on [Keep a Changelog](https://ke
 
 ---
 
+## [0.1.42] — 2026-10-05
+
+### Added
+
+- **Dark mode**: three options under Settings → Appearance — follow the system / always light / always dark. No more staring at a white background while writing at night. The switch takes effect immediately and the choice survives a restart
+- **Every colour value now lives in the theme layer**: colours moved out of hardcoded values scattered across screens into one place, 24 values in total (previously 11), split into a light set and a dark set. New colours are added in one place from now on
+
+### Fixed
+
+- **The second level of the run trace had a smaller marker than the third**: the group header is 14, the second level (reasoning / completed · N items) 12, the third level (each individual call) 10. Previously the second level was a 6-dot solid point, smaller than the third level's 10 — the levels read backwards. Levels two and three are now both rings, level one solid, sizes decreasing by tier; the failure cross follows the same tier
+- **"Reasoning" could not be collapsed**: the reasoning text sat permanently under its heading, jumped two visual levels, and is usually the longest block in a turn. It is now collapsible — expanded automatically while generating (content is streaming in), collapsed when finished; the collapsed heading shows that segment's own word count
+- **"Completed · N items" could not be collapsed**: same as above; it is now collapsible too and the heading keeps the item count
+- **Some rows in a group were tappable and some were not**: the expand control only looked at whether parameters or results existed, so a row with only a description was inert. Now any of description / parameters / results makes it expandable, and the description moved into the expanded area (labelled "notes", before parameters and results)
+- **The model picker's model name went from appearing twice to not appearing at all**: the line under the first row was removed, leaving only the word "follow" with no way to tell which model it resolves to. It is displayed again; the list below still excludes the model currently in use, so the same name appears exactly once in the panel
+- **The bottom navigation icons sat too low**: after the text labels were removed the bar's padding was rebalanced, from 14 above / 12 below to 11 / 15
+- **The word count was squeezed to "0.4…" in the shelf's grid and spine views**: a grid cell is a quarter of the shelf's width, so the count after the volume and chapter numbers was always truncated; and a spine's thickness and height already scale with word count, so writing it again says the same thing twice, plus a narrow spine cannot fit "123k words". Both views now show title, volumes and chapters only; the list view keeps the full information
+
+---
+
+
 ## [0.1.41] — 2026-10-05
 
 ### Added

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { SideDrawer } from "@/components/side-drawer";
-import { colors, spacing } from "@/theme";
+import { colors, spacing, themedStyles } from "@/theme";
 import type { ChatSession, Project } from "@/types";
 
 import { ScalePress } from "@/components/ui";
@@ -218,7 +218,7 @@ export function SessionDrawer({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -228,7 +228,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   // 当前作品：整行浅主色底，文字随主色。
-  projectRowActive: { backgroundColor: "#E6F3EF" },
+  projectRowActive: { backgroundColor: colors.primarySoft },
   rowMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 44 },
   rowPressed: { backgroundColor: colors.surfaceMuted },
   projectTitle: { flexShrink: 1, minWidth: 0, color: colors.text, fontSize: 15, fontWeight: "600" },
@@ -258,4 +258,4 @@ const styles = StyleSheet.create({
   actionText: { color: colors.text, fontSize: 14 },
   actionTextDanger: { color: colors.danger },
   empty: { paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, color: colors.textMuted, fontSize: 12, lineHeight: 20 },
-});
+}));

@@ -103,11 +103,20 @@ import {
   pickContentPack,
   previewContentPack,
 } from "@/settings/content-pack";
-import { colors, radius, spacing } from "@/theme";
+import { colors, radius, spacing, themedStyles, type AppearanceMode } from "@/theme";
+import { useAppearance } from "@/theme-context";
 import type { Model } from "@/types";
+
+/** 外观档位三选一。选中态与「正文字体」那几处共用同一套 chip 形态（modelChoice / modelChoiceActive）。 */
+const APPEARANCE_OPTIONS: Array<{ id: AppearanceMode; label: string }> = [
+  { id: "system", label: "跟随系统" },
+  { id: "light", label: "常亮" },
+  { id: "dark", label: "常暗" },
+];
 
 export type SettingsCategory =
   | "editor"
+  | "appearance"
   | "resources"
   | "mascot"
   | "models"
@@ -124,6 +133,7 @@ export type SettingsCategory =
 
 const TITLES: Record<Exclude<SettingsCategory, "models">, string> = {
   editor: "编辑器",
+  appearance: "外观",
   mascot: "吉祥物",
   "free-models": "免费模型",
   "model-capabilities": "模型能力",
@@ -358,6 +368,9 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
   const [crashEntryCount, setCrashEntryCount] = useState(0);
   const [mascotEnabled, setMascotEnabled] = useState(true);
   const [mascotKind, setMascotKind] = useState<string>("cat");
+  // 外观档位由 ThemeProvider 持有：这里只读当前值并转发切换，写盘也在那边做。
+  const { mode: appearanceMode, setMode: setAppearanceMode } = useAppearance();
+  const setMode = setAppearanceMode;
   // 诊断报告导出状态
   const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
   // 备份 / 恢复状态
@@ -1181,6 +1194,24 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
           </Text>
         </View>
       ) : null}
+      {category === "appearance" ? (
+        <View style={styles.section}>
+          <Text style={styles.subsectionTitle}>主题</Text>
+          <View style={styles.modelChoices}>
+            {APPEARANCE_OPTIONS.map((option) => (
+              <Pressable
+                key={option.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected: appearanceMode === option.id }}
+                onPress={() => setMode(option.id)}
+                style={[styles.modelChoice, appearanceMode === option.id && styles.modelChoiceActive]}
+              >
+                <Text style={styles.modelChoiceText}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ) : null}
       {category === "mascot" ? (
         <View style={styles.section}>
           <Text style={styles.sectionHint}>颜色跟随主题色。</Text>
@@ -1723,7 +1754,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
   errorWrap: { padding: spacing.lg, paddingBottom: 0 },
   warnText: { color: colors.accent, fontSize: 13, lineHeight: 20 },
@@ -1757,7 +1788,7 @@ const styles = StyleSheet.create({
   // 规则 / 技能 / 智能体三处共用的行：带边框与圆角的小卡片。
   // 左侧 12dp 内边距与这套边框是一套 —— 要动边框就连内边距一起理，否则左右会不对称。
   manageRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.sm, marginVertical: 5, paddingVertical: spacing.sm, paddingLeft: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm },
-  activeRow: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
+  activeRow: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   manageText: { flex: 1, minWidth: 0, gap: spacing.xs },
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   progressText: { color: colors.primary, fontSize: 13 },
@@ -1767,7 +1798,7 @@ const styles = StyleSheet.create({
   modelChoices: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   resourceCard: { gap: spacing.sm, padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm },
   resourceMetaRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  installedBadge: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: 999, backgroundColor: "#E6F3EF" },
+  installedBadge: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: 999, backgroundColor: colors.primarySoft },
   installedBadgeText: { color: colors.primary, fontSize: 12, fontWeight: "700" },
   permissionCard: { gap: spacing.sm, marginVertical: 5, padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm },
   presetRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
@@ -1782,7 +1813,7 @@ const styles = StyleSheet.create({
   modeChipTextDeny: { color: colors.danger },
   previewSample: { color: colors.text, fontSize: 15, lineHeight: 24, padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm },
   modelChoice: { maxWidth: "100%", minHeight: 40, justifyContent: "center", paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm },
-  modelChoiceActive: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
+  modelChoiceActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   modelChoiceText: { color: colors.text, fontSize: 13, fontWeight: "600" },
   dangerText: { color: colors.danger },
-});
+}));

@@ -25,7 +25,7 @@ import {
 } from "@/data/note-repositories";
 import type { RootStackParamList } from "@/navigation/types";
 import { useAppStore } from "@/store/app-store";
-import { colors, radius, spacing } from "@/theme";
+import { colors, radius, spacing, themedStyles } from "@/theme";
 import type { Chapter, Note, NoteScope, Volume } from "@/types";
 
 type Group = {
@@ -463,12 +463,12 @@ export function NotesScreen() {
 // 面板底下就多出一截空白。底部留白由弹层外壳统一给。
 const notesFormatBody = { gap: 10 } as const;
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
   errorWrap: { padding: spacing.lg, paddingBottom: 0 },
   list: { padding: spacing.lg, paddingBottom: spacing.xxl },
   intro: { flexDirection: "row", gap: spacing.md, paddingBottom: spacing.lg },
-  introIcon: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: "#E6F3EF" },
+  introIcon: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primarySoft },
   introCopy: { flex: 1, gap: spacing.xs },
   introTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
   introText: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
@@ -500,8 +500,8 @@ const styles = StyleSheet.create({
   inlineActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, marginTop: spacing.sm },
   secondaryIconAction: { width: 46, height: 46, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.surface },
   targetRow: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, marginBottom: 8 },
-  targetRowCurrent: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
+  targetRowCurrent: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   targetScope: { minWidth: 32, color: colors.textMuted, fontSize: 12 },
   targetLabel: { flex: 1, minWidth: 0, color: colors.text, fontSize: 14 },
   targetCurrentText: { color: colors.primary, fontSize: 12, fontWeight: "700" },
-});
+}));

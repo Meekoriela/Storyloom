@@ -22,7 +22,7 @@ import {
 import { KeyboardAwareScrollView, KeyboardAvoidingView as KeyboardAvoider } from "react-native-keyboard-controller";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { colors, radius, spacing } from "@/theme";
+import { colors, radius, spacing, themedStyles } from "@/theme";
 
 export function Screen({ children, scroll = false }: PropsWithChildren<{ scroll?: boolean }>) {
   return (
@@ -165,7 +165,7 @@ export function Button({
         (pressed || disabled) && styles.buttonPressed,
       ]}
     >
-      {loading ? <ActivityIndicator color={variant === "secondary" ? colors.text : "#FFFFFF"} /> : (
+      {loading ? <ActivityIndicator color={variant === "secondary" ? colors.text : colors.onPrimary} /> : (
         <Text style={[styles.buttonText, variant === "secondary" && styles.buttonTextSecondary]}>{label}</Text>
       )}
     </Pressable>
@@ -696,7 +696,7 @@ export function AdaptiveScroll({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   // 居中卡与写作页的命名输入卡同一套数值：遮罩 0.48、卡片内边距 24、圆角 14、底色跟页面一致。
   dialogBackdrop: { flex: 1, justifyContent: "center", padding: spacing.lg, backgroundColor: colors.overlay },
   dialogCard: { gap: spacing.md, padding: spacing.xl, borderRadius: radius.md, backgroundColor: colors.background },
@@ -817,7 +817,7 @@ const styles = StyleSheet.create({
   buttonSecondary: { backgroundColor: colors.surfaceMuted, borderWidth: 1, borderColor: colors.border },
   buttonDanger: { backgroundColor: colors.danger },
   buttonPressed: { opacity: 0.64 },
-  buttonText: { color: "#FFFFFF", fontWeight: "700", fontSize: 15 },
+  buttonText: { color: colors.onPrimary, fontWeight: "700", fontSize: 15 },
   buttonTextSecondary: { color: colors.text },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.lg, padding: spacing.xl },
   emptyTitle: { color: colors.textMuted, fontSize: 16, textAlign: "center" },
@@ -831,9 +831,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: "#FDECEA",
+    backgroundColor: colors.dangerSoft,
   },
   errorText: { flex: 1, color: colors.danger, fontSize: 13, lineHeight: 19 },
   retryButton: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
   retryText: { color: colors.danger, fontSize: 13, fontWeight: "700" },
-});
+}));

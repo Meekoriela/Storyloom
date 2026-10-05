@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { KeyboardAvoidingView as KeyboardAvoider } from "react-native-keyboard-controller";
 import { AdaptiveScroll } from "@/components/ui";
-import { colors, radius, spacing } from "@/theme";
+import { colors, radius, spacing, themedStyles } from "@/theme";
 import type {
   AgentClarificationAnswer,
   AgentClarificationRequest,
@@ -36,15 +36,30 @@ const MONO_FONT = Platform.select({ ios: "Menlo", android: "monospace", default:
 /**
  * 行首的节点，一个标记同时承担"节点"与"状态"：跑着是转圈、完成是实心或空心、失败是叉。
  *
+ * 三档直径 **14 / 12 / 10**，一级实心、二级三级都空心 —— 二级比三级大 2dp，
+ * 这样"执行完成"那一行一眼就大于下面每一次调用，不会出现二级比三级小的倒挂。
+ * 失败叉的尺寸跟着同档直径走（13 / 12 / 10），不另定一套数。
+ *
  * 行里不再另放图标 —— 在干什么由那一行的文字说（工具名、技能名、提问），
  * 图形再说一遍就是同一件事写两遍。
  */
-function TraceNode({ status, lead = false }: { status: AgentTraceEventStatus; lead?: boolean }) {
+function TraceNode({
+  status,
+  level = "child",
+}: {
+  status: AgentTraceEventStatus;
+  level?: "lead" | "sub" | "child";
+}) {
   if (status === "running" || status === "waiting") {
     return <ActivityIndicator size="small" color={colors.primary} />;
   }
-  if (status === "error") return <Ionicons name="close" size={lead ? 13 : 11} color={colors.danger} />;
-  return <View style={lead ? styles.nodeLead : styles.nodeChild} />;
+  if (status === "error") {
+    const size = level === "lead" ? 13 : level === "sub" ? 12 : 10;
+    return <Ionicons name="close" size={size} color={colors.danger} />;
+  }
+  if (level === "lead") return <View style={styles.nodeLead} />;
+  if (level === "sub") return <View style={[styles.nodeSub, styles.nodeSubHollow]} />;
+  return <View style={[styles.nodeChild, styles.nodeChildHollow]} />;
 }
 
 function runStatus(trace: AgentRunTrace): { label: string; color: string } {
@@ -102,33 +117,54 @@ function EventPayload({ label, value }: { label: string; value: string }) {
  * 一轮里常连着调好几个工具（读章节、核对角色、写章节），逐个平铺会让"这一轮动了哪些手"
  * 散成一片；包成一组之后，第二级是「执行完成 · N 项」，第三级才是每一次调用。
  *
- * 这一层不做折叠：一轮只有一个折叠（组头那个），多一个箭头就多一次"点了没反应"。
- * 组里的状态由下面每一行的节点自己说，这一行只报整组的结果。
+ * 折叠：跑动时展开（正在写的东西要看得见），跑完收起（下面挂着的行自己会说话）。
+ * 收起时标题带项数，一眼知道下面有几件事。
  */
 function TraceEventGroup({ events }: { events: AgentTraceEvent[] }) {
   const running = events.some((event) => event.status === "running" || event.status === "waiting");
   const failed = events.some((event) => event.status === "error");
   const label = failed ? "执行中断" : running ? "正在执行" : "执行完成";
+  const [open, setOpen] = useState(running);
+  const previousRunning = useRef(running);
+  useEffect(() => {
+    const changed = previousRunning.current !== running;
+    previousRunning.current = running;
+    if (changed) setOpen(running);
+  }, [running]);
   return (
     <View>
-      <View style={styles.groupHeader}>
-        <View style={styles.nodeSlotGroup}>
-          <View style={[styles.nodeGroup, failed && styles.nodeGroupFailed]} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={open ? "收起执行过程" : "展开执行过程"}
+        onPress={() => setOpen((value) => !value)}
+        style={styles.groupHeader}
+      >
+        <View style={styles.nodeSlotSub}>
+          <TraceNode status={running ? "running" : failed ? "error" : "completed"} level="sub" />
         </View>
-        <Text style={styles.groupTitle}>
+        <Text style={styles.groupTitle} numberOfLines={1}>
           {label}
           {events.length > 1 ? ` · ${events.length} 项` : ""}
         </Text>
-      </View>
-      {events.map((event) => <TraceEventRow key={event.id} event={event} />)}
+        <View style={styles.groupSpacer} />
+        <Ionicons name={open ? "chevron-up" : "chevron-down"} size={17} color={colors.textMuted} />
+      </Pressable>
+      {open ? events.map((event) => <TraceEventRow key={event.id} event={event} />) : null}
     </View>
   );
 }
 
-/** 第三级：一次具体的调用（「已执行 询问用户」这种）。行首一个节点，节点兼作状态。 */
+/**
+ * 第三级：一次具体的调用（「已执行 询问用户」这种）。行首一个节点，节点兼作状态。
+ *
+ * 展开键看的是**有没有内容**（detail / 参数 / 结果 三者任一），不只看 payload ——
+ * 原来按 `input || output` 判，于是同一组里"有 payload"的能点开、"只有 detail"的点不动，
+ * 看着像两类行。detail 是这一次的说明、参数与结果是数据，都归到展开区里。
+ */
 function TraceEventRow({ event }: { event: AgentTraceEvent }) {
   const [expanded, setExpanded] = useState(false);
-  const hasPayload = Boolean(event.input || event.output);
+  const hasPayload = Boolean(event.detail || event.input || event.output);
   return (
     <View>
       <Pressable
@@ -150,7 +186,6 @@ function TraceEventRow({ event }: { event: AgentTraceEvent }) {
               <Text style={styles.agentName} numberOfLines={1}>{event.agentName}</Text>
             ) : null}
           </View>
-          {event.detail ? <Text style={styles.eventDetail} numberOfLines={expanded ? undefined : 2}>{event.detail}</Text> : null}
         </View>
         {hasPayload ? (
           <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={17} color={colors.textMuted} />
@@ -158,6 +193,7 @@ function TraceEventRow({ event }: { event: AgentTraceEvent }) {
       </Pressable>
       {expanded ? (
         <View style={styles.payloads}>
+          {event.detail ? <EventPayload label="说明" value={event.detail} /> : null}
           {event.input ? <EventPayload label="参数" value={event.input} /> : null}
           {event.output ? <EventPayload label="结果" value={event.output} /> : null}
         </View>
@@ -169,23 +205,44 @@ function TraceEventRow({ event }: { event: AgentTraceEvent }) {
 /**
  * 时间线里的一段思考。
  *
- * 组内的一段，不是独立折叠：没有自己的箭头，展开由外层那个合集统一控制。
- * 「用时」与「字数」也不在这里写 —— 两样都由组头承担一次，段内再写一遍就是同一件事说两遍。
+ * 折叠：跑动时展开（内容正在往里写，折叠起来等于什么都看不到），跑完收起 —— 思考正文
+ * 通常是这一轮里最长的一段，常驻会把下面的调用推离视线。
+ * 收起时标题带**本段**字数；组头那个是全轮字数，两处不是同一件事，所以可以并存。
  */
 export function ReasoningSegment({ text, live }: { text: string; live?: boolean }) {
+  const [open, setOpen] = useState(Boolean(live));
+  const previousLive = useRef(Boolean(live));
+  useEffect(() => {
+    const isLive = Boolean(live);
+    const changed = previousLive.current !== isLive;
+    previousLive.current = isLive;
+    if (changed) setOpen(isLive);
+  }, [live]);
+  const chars = text.trim().length;
   return (
     <View style={styles.reasoningSegment}>
-      <View style={styles.reasoningSegmentHeader}>
-        <View style={styles.nodeSlotChild}>
-          <TraceNode status={live ? "running" : "completed"} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={open ? "收起思考过程" : "展开思考过程"}
+        onPress={() => setOpen((value) => !value)}
+        style={styles.reasoningSegmentHeader}
+      >
+        <View style={styles.nodeSlotSub}>
+          <TraceNode status={live ? "running" : "completed"} level="sub" />
         </View>
         <Text style={[styles.reasoningSegmentTitle, live && styles.reasoningSegmentTitleLive]}>
           {live ? "思考中" : "思考过程"}
         </Text>
-      </View>
-      <View style={styles.reasoningSegmentBody}>
-        <Text selectable style={styles.reasoningSegmentText}>{text}</Text>
-      </View>
+        <View style={styles.groupSpacer} />
+        {!live && chars ? <Text style={styles.reasoningSegmentCount}>{chars} 字</Text> : null}
+        <Ionicons name={open ? "chevron-up" : "chevron-down"} size={17} color={colors.textMuted} />
+      </Pressable>
+      {open ? (
+        <View style={styles.reasoningSegmentBody}>
+          <Text selectable style={styles.reasoningSegmentText}>{text}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -370,7 +427,7 @@ export function AgentTraceView({
         style={styles.traceHeader}
       >
         <View style={styles.nodeSlotLead}>
-          <TraceNode status={nodeStatus} lead />
+          <TraceNode status={nodeStatus} level="lead" />
         </View>
         <Text style={[styles.traceStatus, { color: status.color }]} numberOfLines={1}>{status.label}</Text>
         <View style={styles.traceSpacer} />
@@ -560,24 +617,27 @@ export function AgentQuestionSheet({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   // 组根：不画外框与底色，状态行与后续轨迹直接落在消息/实时时间线上。
   trace: { alignSelf: "flex-start", flexShrink: 1, maxWidth: "88%" },
   traceInline: { borderWidth: 0, borderRadius: 0, backgroundColor: "transparent" },
   // 层级由"各行的 paddingLeft + 节点容器宽度"共同决定，动其中一处要一起看。一档取 8：
   // 深一档只是"往里让一点"（20 太松、12 看着仍远），三级正文被推得太靠右时一条消息里显空。
-  //   第一级（组头）     paddingLeft 0 + nodeSlotLead 14 ⇒ 文字 22
-  //   第二级（思考/执行完成）paddingLeft 8 + nodeSlotChild 10 ⇒ 文字 26
-  //   第三级（一次调用）  paddingLeft 16 + nodeSlotChild 10 ⇒ 文字 34
-  // 三个节点标记：第一级实心稍大（兼状态）、第二级小实心点（只表示"这是一组"）、
-  // 第三级空心圈（兼状态）。
+  // 节点容器宽度跟着该档直径走，于是三档文字左缘分别是 22 / 28 / 34 —— 逐档递进 6。
+  //   第一级（组头）      paddingLeft 0 + nodeSlotLead 14 ⇒ 文字 22
+  //   第二级（思考/执行完成）paddingLeft 8 + nodeSlotSub 12  ⇒ 文字 28
+  //   第三级（一次调用）   paddingLeft 16 + nodeSlotChild 10 ⇒ 文字 34
+  // 节点直径三档 **14 / 12 / 10**，二级比三级大 2dp —— 层级只能靠直径递进，
+  // 出现二级小于三级就等于把层级说反了。形态：一级实心，二三级空心圈。
+  // 描边与节点分开两个样式，是为了失败时能只换描边颜色而不动直径。
   nodeSlotLead: { width: 14, alignItems: "center", justifyContent: "center" },
   nodeLead: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.primary },
+  nodeSlotSub: { width: 12, alignItems: "center", justifyContent: "center" },
+  nodeSub: { width: 12, height: 12, borderRadius: 6 },
+  nodeSubHollow: { borderWidth: 1.5, borderColor: colors.textMuted },
   nodeSlotChild: { width: 10, alignItems: "center", justifyContent: "center" },
-  nodeChild: { width: 10, height: 10, borderRadius: 5, borderWidth: 1.5, borderColor: colors.textMuted },
-  nodeSlotGroup: { width: 10, height: 10, alignItems: "center", justifyContent: "center" },
-  nodeGroup: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textMuted },
-  nodeGroupFailed: { backgroundColor: colors.danger },
+  nodeChild: { width: 10, height: 10, borderRadius: 5 },
+  nodeChildHollow: { borderWidth: 1.5, borderColor: colors.textMuted },
   // 组头：节点左缘与正文左缘对齐（圆心 = 半径 7），所以左侧不留内边距。
   traceHeader: {
     minHeight: 42,
@@ -590,7 +650,8 @@ const styles = StyleSheet.create({
   traceSpacer: { flex: 1 },
   traceElapsed: { flexShrink: 0, color: colors.textMuted, fontSize: 12 },
   events: {},
-  // 第二级「执行完成」：与「思考过程」同一档缩进，差别是它下面还挂着第三级。
+  // 第二级「执行完成」：与「思考过程」同一档缩进与同一个节点标记，差别只在于它下面
+  // 挂的是第三级而不是正文。两者都带自己的折叠开关。
   groupHeader: {
     minHeight: 42,
     flexDirection: "row",
@@ -600,22 +661,25 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   groupTitle: { flexShrink: 1, color: colors.text, fontSize: 13 },
+  groupSpacer: { flex: 1 },
   collaborationNotice: {
     minHeight: 34,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
-    backgroundColor: "#E8F2EE",
+    backgroundColor: colors.mint,
   },
   collaborationText: { flex: 1, color: colors.primary, fontSize: 12, fontWeight: "600" },
-  // 思考段：组内的一段，没有自己的折叠箭头；正文与子行文字同列，不再自成一块。
+  // 思考段：与「执行完成」同一档缩进与同一个节点标记。收起时正文不占空间，标题行
+  // 给出本段字数；展开时正文与本段标题同列（+28 = paddingLeft 8 + 节点 12 + 间隔 8）。
   reasoningSegment: { paddingHorizontal: 0 },
   reasoningSegmentHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 42, paddingLeft: 8 },
-  reasoningSegmentTitle: { color: colors.text, fontSize: 13 },
+  reasoningSegmentTitle: { flexShrink: 1, color: colors.text, fontSize: 13 },
   reasoningSegmentTitleLive: { color: colors.primary },
+  reasoningSegmentCount: { flexShrink: 0, color: colors.textMuted, fontSize: 12 },
   reasoningSegmentText: { color: colors.textMuted, fontSize: 13, lineHeight: 20 },
-  reasoningSegmentBody: { marginTop: spacing.xs, paddingLeft: 26 },
+  reasoningSegmentBody: { marginTop: spacing.xs, paddingLeft: 28 },
   // 第三级：具体的一次调用。行高与上面两级一致，层级只靠缩进，不靠尺寸。
   eventHeader: {
     minHeight: 42,
@@ -629,9 +693,8 @@ const styles = StyleSheet.create({
   eventTitleLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   eventTitle: { flexShrink: 1, color: colors.text, fontSize: 13 },
   agentName: { flexShrink: 1, color: colors.textMuted, fontSize: 11 },
-  eventDetail: { marginTop: 3, color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-  // 「参数 / 结果」是第三级那一行的内容，与那一行的文字同列（+34 = 上面 paddingLeft 16 +
-  // 节点 10 + 间隔 8）。不铺底色、不画线：等宽字体与两个标签已经说明它是数据，不是正文。
+  // 「说明 / 参数 / 结果」是第三级那一行的内容，与那一行的文字同列（+34 = 上面
+  // paddingLeft 16 + 节点 10 + 间隔 8）。不铺底色、不画线：等宽字体与标签已经说明它是数据。
   payloads: { gap: spacing.sm, paddingLeft: 34, paddingBottom: spacing.sm },
   payload: { gap: spacing.xs },
   payloadLabel: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
@@ -734,5 +797,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
   },
   questionButtonDisabled: { opacity: 0.45 },
-  questionButtonPrimaryText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600" },
-  });
+  questionButtonPrimaryText: { color: colors.onPrimary, fontSize: 13, fontWeight: "600" },
+  }));

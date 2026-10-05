@@ -70,7 +70,7 @@ import {
 import type { RootTabParamList } from "@/navigation/types";
 import { getAgentDefinitions, getWriteApproval, saveWriteApproval, type WriteApprovalMode } from "@/settings/config";
 import { useAppStore } from "@/store/app-store";
-import { colors, radius, shadow, spacing } from "@/theme";
+import { colors, radius, shadow, spacing, themedStyles } from "@/theme";
 import type {
   AgentClarificationRequest,
   AgentClarificationResponse,
@@ -1542,7 +1542,7 @@ export function AssistantScreen() {
               onPress={() => void send(retryRequest && input.trim() === retryRequest.userMessage.content ? retryRequest : null)}
               style={({ pressed }) => [styles.sendButton, (pressed || !selection || !input.trim()) && styles.sendDisabled]}
             >
-              {sending ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Ionicons name="arrow-up" size={20} color="#FFFFFF" />}
+              {sending ? <ActivityIndicator color={colors.onPrimary} size="small" /> : <Ionicons name="arrow-up" size={20} color={colors.onPrimary} />}
             </ScalePress>
           </View>
           </View>
@@ -1627,10 +1627,13 @@ export function AssistantScreen() {
                     color={explicitModelId === null || explicitModelId === defaultModelId ? colors.primary : colors.textMuted}
                   />
                   <View style={styles.sheetRowText}>
-                    {/* 第一项代表「此刻正在用的那个模型」——下面列表已把defaultModelId 那一行
-                        剔掉，所以这里既是状态、也是名字：不再另写一行小字，
-                        同一个模型在整个面板里只出现一次。 */}
+                    {/* 第一项是「此刻正在用的那个模型」。下面列表已把 defaultModelId 那一行
+                        剔掉，所以这个名字在这个面板里只有这里能显示 —— 少了这一行，就只剩
+                        「跟随」两个字，看不出落到哪个模型上。 */}
                     <Text style={styles.sheetRowTitle}>跟随主智能体或默认模型</Text>
+                    <Text style={styles.sheetRowMeta} numberOfLines={1}>
+                      {models.find((model) => model.id === defaultModelId)?.name ?? "尚未选择默认模型"}
+                    </Text>
                   </View>
                 </Pressable>
               }
@@ -1752,7 +1755,7 @@ export function AssistantScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   flex: { flex: 1 },
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
@@ -1812,7 +1815,7 @@ const styles = StyleSheet.create({
   userMessage: { alignSelf: "flex-end", maxWidth: "88%", paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceMuted },
   assistantMessage: {},
   messageText: { color: colors.text, fontSize: 16, lineHeight: 24 },
-  failureCard: { alignSelf: "flex-start", flexShrink: 1, maxWidth: "88%", minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderWidth: 1, borderColor: "#E4B4AE", borderRadius: radius.sm, backgroundColor: "#FFF4F2" },
+  failureCard: { alignSelf: "flex-start", flexShrink: 1, maxWidth: "88%", minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderWidth: 1, borderColor: colors.dangerBorder, borderRadius: radius.sm, backgroundColor: colors.sand },
   failureTitle: { color: colors.danger, fontSize: 13, fontWeight: "700" },
   failureRetry: { minHeight: 28, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, borderWidth: 1, borderColor: colors.danger, borderRadius: radius.sm },
   failureRetryDisabled: { opacity: 0.5 },
@@ -1883,9 +1886,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     backgroundColor: colors.primary,
   },
-  writeCardButtonPrimaryText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600" },
+  writeCardButtonPrimaryText: { color: colors.onPrimary, fontSize: 13, fontWeight: "600" },
   writeStats: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, paddingVertical: spacing.xs },
-  writeStatAdd: { color: "#1B7F4D", fontSize: 12, fontWeight: "800" },
+  writeStatAdd: { color: colors.success, fontSize: 12, fontWeight: "800" },
   writeStatDel: { color: colors.danger, fontSize: 12, fontWeight: "800" },
   writeDiffScroll: { maxHeight: 260, marginTop: spacing.sm },
   writeDiffToggle: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, marginTop: spacing.xs, paddingVertical: spacing.sm + 2 },
@@ -1894,7 +1897,7 @@ const styles = StyleSheet.create({
   writeDiff: { marginTop: spacing.sm, gap: 4 },
   writeDiffLabel: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
   writeDiffLabelSpaced: { marginTop: spacing.xs },
-  writeDiffAdd: { color: "#1B7F4D", fontSize: 12, lineHeight: 18 },
+  writeDiffAdd: { color: colors.success, fontSize: 12, lineHeight: 18 },
   writeDiffDel: { color: colors.danger, fontSize: 12, lineHeight: 18 },
   mascot: { position: "absolute", right: 14, top: -40, width: 40, height: 44 },
   mascotImage: { width: "100%", height: "100%", resizeMode: "contain" },
@@ -1904,16 +1907,16 @@ const styles = StyleSheet.create({
   welcomeChip: { borderWidth: 1, borderColor: colors.border, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: colors.background },
   welcomeChipText: { color: colors.textMuted, fontSize: 11.5 },
   editingBanner: { minHeight: 36, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  undoBanner: { minHeight: 36, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.md, paddingVertical: spacing.xs, backgroundColor: "#E6F3EF", borderRadius: 8 },
+  undoBanner: { minHeight: 36, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.md, paddingVertical: spacing.xs, backgroundColor: colors.primarySoft, borderRadius: 8 },
   attachmentRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  attachmentChip: { flexDirection: "row", alignItems: "center", gap: 5, maxWidth: "100%", paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, backgroundColor: "#E6F3EF" },
+  attachmentChip: { flexDirection: "row", alignItems: "center", gap: 5, maxWidth: "100%", paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.primarySoft },
   attachmentName: { color: colors.text, fontSize: 12, maxWidth: 150 },
   attachmentMeta: { color: colors.textMuted, fontSize: 11 },
   attachmentRemove: { padding: 2 },
   attachButton: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 19 },
   undoText: { flex: 1, color: colors.text, fontSize: 13 },
   undoButton: { minWidth: 56, minHeight: 30, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: colors.primary },
-  undoButtonText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600" },
+  undoButtonText: { color: colors.onPrimary, fontSize: 13, fontWeight: "600" },
   editingCopy: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
   editingText: { color: colors.primary, fontSize: 13, fontWeight: "600" },
   composerInput: { flex: 1, maxHeight: 130, minHeight: 40, paddingHorizontal: spacing.sm, paddingVertical: 10, color: colors.text, fontSize: 16 },
@@ -1944,6 +1947,6 @@ const styles = StyleSheet.create({
   // 面板最后一条说明不贴下沿。
   contextBody: { paddingBottom: spacing.xl },
   contextNoteWarning: { color: colors.danger },
-  capabilityNotice: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginHorizontal: spacing.md, marginBottom: spacing.xs, padding: spacing.sm, borderRadius: 8, backgroundColor: "#FCEBEB" },
+  capabilityNotice: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginHorizontal: spacing.md, marginBottom: spacing.xs, padding: spacing.sm, borderRadius: 8, backgroundColor: colors.dangerSoftStrong },
   capabilityNoticeText: { flex: 1, color: colors.danger, fontSize: 12, lineHeight: 18 },
-});
+}));

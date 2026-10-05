@@ -27,7 +27,7 @@ import { exportWorldInfo, type LibraryExportFormat } from "@/lib/export";
 import { logImportBreadcrumb, parseSillyTavernWorldInfo, pickSillyTavernFile } from "@/lib/sillytavern";
 import type { RootStackParamList } from "@/navigation/types";
 import { useAppStore } from "@/store/app-store";
-import { colors, radius, spacing } from "@/theme";
+import { colors, radius, spacing, themedStyles } from "@/theme";
 import type { Project, WorldInfo, WorldInfoEntry } from "@/types";
 
 /** 关键词输入：中英文逗号、顿号都能分隔。 */
@@ -412,7 +412,7 @@ export function WorldInfoScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   flex: { flex: 1 },
   headerActions: { flexDirection: "row", alignItems: "center" },
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
@@ -450,4 +450,4 @@ const styles = StyleSheet.create({
   triggerCopy: { flex: 1, minWidth: 0, gap: 2 },
   triggerHint: { color: colors.textMuted, fontSize: 12 },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm, marginTop: spacing.md },
-});
+}));

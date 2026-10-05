@@ -35,7 +35,7 @@ import {
 } from "@/settings/lorn-style-plugin";
 import { importStyleSource, deleteStyleSource } from "@/style/source-library";
 import { useAppStore } from "@/store/app-store";
-import { colors, radius, spacing } from "@/theme";
+import { colors, radius, spacing, themedStyles } from "@/theme";
 import type { StyleProfile, StyleSource } from "@/types";
 
 function formatBytes(value: number): string {
@@ -616,7 +616,7 @@ function ProfileRow({
 // 顶部面板里只包一块表单时的留白。
 const styleSheetPad = { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm } as const;
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   errorWrap: { padding: spacing.lg, paddingBottom: 0 },
@@ -624,11 +624,11 @@ const styles = StyleSheet.create({
   emptyList: { flexGrow: 1, paddingBottom: spacing.xl },
   headerContent: { padding: spacing.lg, paddingBottom: spacing.sm },
   intro: { flexDirection: "row", gap: spacing.md, paddingBottom: spacing.lg },
-  introIcon: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: "#E6F3EF" },
+  introIcon: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primarySoft },
   introCopy: { flex: 1, gap: spacing.xs },
   introTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
   introText: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
-  activeStrip: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.sm, backgroundColor: "#E6F3EF" },
+  activeStrip: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.sm, backgroundColor: colors.primarySoft },
   activeStripText: { flex: 1, color: colors.primary, fontSize: 13, fontWeight: "600" },
   clearActive: { minHeight: 44, justifyContent: "center", paddingHorizontal: spacing.sm },
   clearActiveText: { color: colors.primary, fontSize: 13, fontWeight: "700" },
@@ -638,7 +638,7 @@ const styles = StyleSheet.create({
   sectionMeta: { color: colors.textMuted, fontSize: 12 },
   sourceRow: { minHeight: 84, flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   sourceRowPressed: { backgroundColor: colors.surfaceMuted },
-  bookIcon: { width: 48, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: "#DCECE6" },
+  bookIcon: { width: 48, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.teal },
   sourceCopy: { flex: 1, minWidth: 0, gap: 3 },
   sourceTitle: { color: colors.text, fontSize: 16, fontWeight: "700" },
   sourceMeta: { color: colors.textMuted, fontSize: 12 },
@@ -670,11 +670,11 @@ const styles = StyleSheet.create({
   progressTrack: { height: 6, borderRadius: 3, backgroundColor: colors.surfaceMuted, overflow: "hidden" },
   progressFill: { height: 6, borderRadius: 3, backgroundColor: colors.primary },
   progressText: { color: colors.primary, fontSize: 13, lineHeight: 19, fontWeight: "600" },
-  checkpointBox: { gap: spacing.xs, padding: spacing.md, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.sm, backgroundColor: "#E6F3EF" },
+  checkpointBox: { gap: spacing.xs, padding: spacing.md, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.sm, backgroundColor: colors.primarySoft },
   checkpointTitle: { color: colors.primary, fontSize: 13, fontWeight: "700" },
   checkpointText: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
   emptyHint: { color: colors.textMuted, fontSize: 14, lineHeight: 21, paddingVertical: spacing.md },
   guideText: { color: colors.text, fontSize: 14, lineHeight: 21 },
   // 按钮行已挪出滚动区，底部留白改由它自己承担（另一处 inlineActions 不受影响）。
   profileActionsBar: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, marginTop: spacing.sm },
-});
+}));

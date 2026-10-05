@@ -17,7 +17,7 @@ import { BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, Field, Hea
 import { createCategory, createProject, deleteCategory, deleteProject, getProjectStats, getProjectStatsMap, getSetting, listCategories, listProjects, renameCategory, setProjectCategory, setSetting, updateProjectCover, updateProjectInfo, type ProjectStats } from "@/data/repositories";
 import type { RootStackParamList, RootTabParamList } from "@/navigation/types";
 import { useAppStore } from "@/store/app-store";
-import { colors, radius, shadow, spacing } from "@/theme";
+import { colors, radius, shadow, spacing, themedStyles } from "@/theme";
 import type { Category, Project } from "@/types";
 
 /** 书架样式：网格（书封朝上）／列表（书封朝左）／书脊（只看书脊，竖排书名）。 */
@@ -446,12 +446,17 @@ function spineLeanShift(lean: number, height: number): number {
   return Math.abs(Math.sin((lean * Math.PI) / 180)) * height;
 }
 
-/** 书架封面卡：无封面时按书名哈希取低饱和底色 + 首字水印，同一批作品颜色分散开。 */
-const COVER_COLORS = ["#2E6B5A", "#8A5A4A", "#4A5B8A", "#7A6A4A", "#5F4A6B"];
+/**
+ * 书架封面卡：无封面时按书名哈希取低饱和底色 + 首字水印，同一批作品颜色分散开。
+ *
+ * 色板随档位切换：深色档那一套是同样五个色相整体压暗的版本 —— 原来的亮度放在深底上会发灰，
+ * 看着像褪色而不是低饱和。
+ */
 function coverColor(title: string): string {
   let hash = 0;
   for (let index = 0; index < title.length; index += 1) hash = (hash * 31 + title.charCodeAt(index)) >>> 0;
-  return COVER_COLORS[hash % COVER_COLORS.length];
+  const palette = colors.coverPalette;
+  return palette[hash % palette.length];
 }
 
   /**
@@ -774,7 +779,9 @@ function coverColor(title: string): string {
                 <View style={[styles.shelfLabels, { gap: cellGap }]}>
                   {row.map((project) => {
                     const st = stats[project.id];
-                    const statsLine = st ? `${st.volumes} 卷 · ${st.chapters} 章 · ${(st.characters / 10000).toFixed(1)} 万字` : "…";
+                    // 网格不写字数：这一格只有四分之一栏宽，字数跟在卷章后面必然被截成「0.4…」。
+                    // 只留作品名与卷章数；要精确字数切到列表视图。
+                    const statsLine = st ? `${st.volumes} 卷 · ${st.chapters} 章` : "…";
                     return (
                       <View key={project.id} style={[styles.shelfLabelCell, { width: cellWidth }]}>
                         <Text style={styles.gridName} numberOfLines={1}>{project.title}</Text>
@@ -850,8 +857,10 @@ function coverColor(title: string): string {
                     return (
                       <View key={project.id} style={[styles.spineLabelCell, { width, marginLeft }]}>
                         <Text style={styles.spineLabel} numberOfLines={1}>{project.title}</Text>
+                        {/* 书脊不写字数：书脊的厚薄高矮本来就按字数缩放，字数再写一遍是同一件事说两遍，
+                            而且窄书脊放不下「12.3 万字」这一串。 */}
                         <Text style={styles.spineStats} numberOfLines={1}>
-                          {stats[project.id] ? `${stats[project.id].chapters} 章 · ${((stats[project.id]?.characters ?? 0) / 10000).toFixed(1)} 万字` : "…"}
+                          {stats[project.id] ? `${stats[project.id].chapters} 章` : "…"}
                         </Text>
                       </View>
                     );
@@ -1082,7 +1091,7 @@ function coverColor(title: string): string {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   quickActions: { flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   quickAction: { flex: 1, minHeight: 54, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background },
@@ -1106,7 +1115,7 @@ const styles = StyleSheet.create({
   shelfBooks: { flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 6 },
   shelfCell: { alignItems: "center" },
   bookObject: { width: "100%", aspectRatio: 3 / 4, borderRadius: 2, overflow: "hidden", justifyContent: "center" },
-  bookSpine: { position: "absolute", left: 0, top: 0, bottom: 0, width: "9%", backgroundColor: "#EDE6D8", borderRightWidth: 1, borderRightColor: "rgba(0,0,0,0.10)" },
+  bookSpine: { position: "absolute", left: 0, top: 0, bottom: 0, width: "9%", backgroundColor: colors.cream, borderRightWidth: 1, borderRightColor: colors.border },
   bookCoverTextWrap: { alignSelf: "stretch", alignItems: "center", gap: 2, paddingHorizontal: 18 },
   bookCoverLine: { color: "rgba(255,255,255,0.95)", fontSize: 16, fontWeight: "800", letterSpacing: 1 },
   bookCoverLineLead: { fontSize: 20 },
@@ -1157,7 +1166,7 @@ const styles = StyleSheet.create({
   shelfChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   shelfChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   shelfChipText: { color: colors.text, fontSize: 13 },
-  shelfChipTextActive: { color: "#FFFFFF" },
+  shelfChipTextActive: { color: colors.onPrimary },
   categoryRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 10},
   categoryEditRow: { paddingVertical: spacing.sm },
   categoryHint: { marginLeft: "auto", color: colors.textMuted, fontSize: 12 },
@@ -1179,7 +1188,7 @@ const styles = StyleSheet.create({
   modalBody: { gap: spacing.lg, padding: spacing.xl, borderRadius: radius.md, backgroundColor: colors.background },
   modalTitle: { color: colors.text, fontSize: 20, fontWeight: "700" },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm },
-});
+}));
 
 // 作品菜单进顶部面板后的容器：行自带左右内边距，这里只补行距与底部留白。
 const menuSheetBody = { gap: 2 } as const;

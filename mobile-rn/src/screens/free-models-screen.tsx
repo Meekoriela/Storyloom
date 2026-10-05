@@ -9,7 +9,7 @@ import { listProviders, saveModel, saveProvider, setSetting } from "@/data/repos
 import { DEFAULT_MAX_OUTPUT_TOKENS } from "@/llm/limits";
 import { FREE_MODELS, type FreeModel } from "@/settings/free-models";
 import { guessModelCapabilities } from "@/settings/model-capabilities";
-import { colors, spacing } from "@/theme";
+import { colors, spacing, themedStyles } from "@/theme";
 
 /**
  * 免费模型专区：独立分类页。
@@ -178,14 +178,14 @@ export function FreeModelsScreen({ onBack, onSaved }: { onBack: () => void; onSa
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   section: { padding: spacing.lg, gap: spacing.md },
   intro: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-  errorText: { color: colors.danger ?? "#A32D2D", fontSize: 12 },
+  errorText: { color: colors.danger, fontSize: 12 },
   card: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, overflow: "hidden" },
   cardExpanded: { borderColor: colors.primary },
   cardHeader: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md },
-  cardIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 8, backgroundColor: "#E6F3EF" },
+  cardIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 8, backgroundColor: colors.primarySoft },
   cardText: { flex: 1, minWidth: 0 },
   cardTitleRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   cardTitle: { flexShrink: 1, color: colors.text, fontSize: 15, fontWeight: "600" },
@@ -195,11 +195,11 @@ const styles = StyleSheet.create({
   cardBody: { gap: spacing.md, padding: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   chip: { paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background },
-  chipActive: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
+  chipActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   chipText: { color: colors.text, fontSize: 12 },
   chipTextActive: { color: colors.primary, fontWeight: "600" },
   noteBox: { gap: 4, padding: spacing.md, borderRadius: 10, backgroundColor: colors.surfaceMuted },
   noteLabel: { color: colors.text, fontSize: 13, fontWeight: "600" },
   noteFull: { color: colors.textMuted, fontSize: 12, lineHeight: 19 },
   cardHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-});
+}));

@@ -2,13 +2,13 @@
 // 改动说明见仓库根目录 docs/上游来源与改动清单.md
 import { Ionicons } from "@expo/vector-icons";
 import { createBottomTabNavigator, type BottomTabBarButtonProps } from "@react-navigation/bottom-tabs";
-import { NavigationContainer } from "@react-navigation/native";
+import { NavigationContainer, DarkTheme, DefaultTheme } from "@react-navigation/native";
 import { PlatformPressable } from "@react-navigation/elements";
 import { appendBreadcrumb } from "@/lib/crash-log";
 import { checkAppUpdate, downloadAndInstallUpdate, type AppUpdateInfo } from "@/settings/app-update";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Linking, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -24,7 +24,8 @@ import { StyleLibraryScreen } from "@/screens/style-library-screen";
 import { WritingScreen } from "@/screens/writing-screen";
 import { NotesScreen } from "@/screens/notes-screen";
 import { WorldInfoScreen } from "@/screens/world-info-screen";
-import { colors } from "@/theme";
+import { colors, themedStyles } from "@/theme";
+import { AppearanceProvider, useAppearance } from "@/theme-context";
 import { getRuntimeResourceState, type RuntimeResourceState } from "@/settings/remote-resources";
 import { warmUpLocalModels } from "@/search/local-models";
 
@@ -75,11 +76,13 @@ function MainTabs() {
           tabBarStyle: {
             backgroundColor: colors.background,
             borderTopColor: colors.border,
-            // 56：去掉文字之后比原来那版（58）略矮一档，栏内上下留白接近对称。
+            // 56：去掉文字之后比原来那版（58）略矮一档。
             height: 56 + insets.bottom,
-            // 顶部留白 2 → 14、底部保持 12：栏变高的那 12dp 全部给到图标上方，图标不再压着屏幕下沿。
-            paddingBottom: Math.max(insets.bottom, 12),
-            paddingTop: 14,
+            // 上下留白 11 / 15：栏高去掉文字后要重新分配，这 12dp 起初全给了上方（14 / 12），
+            // 结果图标偏下。线性图形的描边重心本就略高于几何中心，留白差正好抵掉那一点偏上，
+            // 于是上少下多 —— 11 给上方，15 留给下方（下方还叠着 insets.bottom，更不会被察觉）。
+            paddingBottom: Math.max(insets.bottom, 15),
+            paddingTop: 11,
           },
           tabBarHideOnKeyboard: true,
           tabBarButton: (props) => <TabPressButton {...props} />,
@@ -105,9 +108,11 @@ function MainTabs() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <KeyboardProvider preserveEdgeToEdge>
-        <RuntimeResourceGate />
-      </KeyboardProvider>
+      <AppearanceProvider>
+        <KeyboardProvider preserveEdgeToEdge>
+          <RuntimeResourceGate />
+        </KeyboardProvider>
+      </AppearanceProvider>
     </SafeAreaProvider>
   );
 }
@@ -117,6 +122,35 @@ function RuntimeResourceGate() {
   const [checking, setChecking] = useState(true);
   const [skipped, setSkipped] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 导航容器自己的底色与卡片色要跟着档位走：它默认是白底，深色档下转场与手势返回会闪一下白。
+  const { scheme } = useAppearance();
+  const navTheme = useMemo(
+    () =>
+      scheme === "dark"
+        ? {
+            ...DarkTheme,
+            colors: {
+              ...DarkTheme.colors,
+              background: colors.background,
+              card: colors.surface,
+              text: colors.text,
+              border: colors.border,
+              primary: colors.primary,
+            },
+          }
+        : {
+            ...DefaultTheme,
+            colors: {
+              ...DefaultTheme.colors,
+              background: colors.background,
+              card: colors.surface,
+              text: colors.text,
+              border: colors.border,
+              primary: colors.primary,
+            },
+          },
+    [scheme],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -140,7 +174,7 @@ function RuntimeResourceGate() {
   if (checking) {
     return (
       <View style={styles.resourceLoading}>
-        <StatusBar style="dark" />
+        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
         <ActivityIndicator size="large" color={colors.primary} />
         <Text style={styles.resourceProgress}>正在准备…</Text>
       </View>
@@ -152,7 +186,7 @@ function RuntimeResourceGate() {
   if (state && !state.ready && !skipped) {
     return (
       <View style={styles.resourceGate}>
-        <StatusBar style="dark" />
+        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
         <Text style={styles.resourceTitle}>缺少必需内容</Text>
         <Text style={styles.resourceSubtitle}>以下内容为助手运行所需。缺失部分仅影响对应功能，可先进入应用，稍后在设置中处理。</Text>
         <View style={styles.resourceList}>
@@ -177,6 +211,7 @@ function RuntimeResourceGate() {
   return (
     <>
     <NavigationContainer
+      theme={navTheme}
       onStateChange={(state) => {
         try {
           // 递归下钻嵌套导航状态，取当前最深层路由名（Stack → Tab → 页面）
@@ -192,7 +227,7 @@ function RuntimeResourceGate() {
         } catch {}
       }}
     >
-      <StatusBar style="dark" />
+      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         <Stack.Screen name="Main" component={MainTabs} />
         <Stack.Screen name="Characters" component={CharactersScreen} />
@@ -206,24 +241,24 @@ function RuntimeResourceGate() {
   );
 }
 
-const styles = StyleSheet.create({
-  updateBackdrop: { flex: 1, backgroundColor: "rgba(20,21,19,0.45)", alignItems: "center", justifyContent: "center", padding: 28 },
-  updateCard: { alignSelf: "stretch", backgroundColor: "#FFFFFF", borderRadius: 16, padding: 18 },
-  updateTitle: { fontSize: 17, fontWeight: "700", color: "#20211F" },
-  updateHint: { marginTop: 8, fontSize: 13, color: "#696B66", lineHeight: 19 },
+const styles = themedStyles((colors) => StyleSheet.create({
+  updateBackdrop: { flex: 1, backgroundColor: colors.overlay, alignItems: "center", justifyContent: "center", padding: 28 },
+  updateCard: { alignSelf: "stretch", backgroundColor: colors.surface, borderRadius: 16, padding: 18 },
+  updateTitle: { fontSize: 17, fontWeight: "700", color: colors.text },
+  updateHint: { marginTop: 8, fontSize: 13, color: colors.textMuted, lineHeight: 19 },
   updateNotesScroll: { maxHeight: 260, marginTop: 10 },
-  updateNoteSection: { marginTop: 8, marginBottom: 2, fontSize: 13, fontWeight: "700", color: "#20211F" },
+  updateNoteSection: { marginTop: 8, marginBottom: 2, fontSize: 13, fontWeight: "700", color: colors.text },
   updateNoteRow: { flexDirection: "row", gap: 6, marginTop: 4 },
-  updateNoteBullet: { color: "#176B57", fontSize: 13, lineHeight: 20 },
-  updateNoteText: { flex: 1, fontSize: 13, lineHeight: 20, color: "#3B3C3A" },
-  updateDetail: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 12, backgroundColor: "#EFEFEC" },
-  updateDetailText: { color: "#20211F", fontSize: 14, fontWeight: "600" },
+  updateNoteBullet: { color: colors.primary, fontSize: 13, lineHeight: 20 },
+  updateNoteText: { flex: 1, fontSize: 13, lineHeight: 20, color: colors.textFaint },
+  updateDetail: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 12, backgroundColor: colors.surfaceMuted },
+  updateDetailText: { color: colors.text, fontSize: 14, fontWeight: "600" },
   updateActions: { flexDirection: "row", gap: 10, marginTop: 16 },
-  updateLater: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 12, backgroundColor: "#EFEFEC" },
-  updateLaterText: { color: "#20211F", fontSize: 14, fontWeight: "600" },
-  updateNow: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 12, backgroundColor: "#176B57" },
+  updateLater: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 12, backgroundColor: colors.surfaceMuted },
+  updateLaterText: { color: colors.text, fontSize: 14, fontWeight: "600" },
+  updateNow: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 12, backgroundColor: colors.primary },
   updateNowBusy: { opacity: 0.6 },
-  updateNowText: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
+  updateNowText: { color: colors.onPrimary, fontSize: 14, fontWeight: "700" },
   resourceGate: { flex: 1, justifyContent: "center", padding: 28, backgroundColor: colors.background },
   resourceLoading: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, backgroundColor: colors.background },
   resourceTitle: { color: colors.text, fontSize: 28, fontWeight: "800" },
@@ -237,10 +272,10 @@ const styles = StyleSheet.create({
   resourceProgress: { marginTop: 24, color: colors.textMuted, fontSize: 13, lineHeight: 20 },
   downloadButton: { minHeight: 50, alignItems: "center", justifyContent: "center", marginTop: 20, borderRadius: 8, backgroundColor: colors.primary },
   downloadButtonDisabled: { opacity: 0.55 },
-  downloadButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
+  downloadButtonText: { color: colors.onPrimary, fontSize: 15, fontWeight: "700" },
   retryResourceButton: { minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 8 },
   retryResourceText: { color: colors.primary, fontSize: 14, fontWeight: "700" },
-});
+}));
 
 /** 把 Release 说明（Markdown）拆成弹窗里的行：标题行与条目行。 */
 const parseUpdateNotes = (notes: string): Array<{ kind: "section" | "item"; text: string }> =>

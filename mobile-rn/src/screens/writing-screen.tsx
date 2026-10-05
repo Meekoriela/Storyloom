@@ -59,7 +59,7 @@ import type { RootStackParamList } from "@/navigation/types";
 import { editorFontFamily, readEditorPrefs, type EditorFontId } from "@/settings/editor-prefs";
 import { evolveAuthorStyle } from "@/settings/lorn-style-plugin";
 import { useAppStore } from "@/store/app-store";
-import { colors, radius, spacing } from "@/theme";
+import { colors, radius, spacing, themedStyles } from "@/theme";
 import type { Chapter, ChapterDraftSnapshot, ChapterVersion, Project, StyleProfile, Volume } from "@/types";
 
 const AUTO_SAVE_DELAY_MS = 1_000;
@@ -1223,7 +1223,7 @@ export function WritingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   flex: { flex: 1 },
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
   muted: { color: colors.textMuted, fontSize: 15, padding: spacing.lg, textAlign: "center" },
@@ -1264,7 +1264,7 @@ const styles = StyleSheet.create({
   historyRowCopy: { flex: 1, minWidth: 0, gap: 3 },
   historyRowTitleLine: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   historyRowTime: { color: colors.text, fontSize: 15, fontWeight: "700" },
-  historyRowBadge: { color: colors.primary, fontSize: 11, fontWeight: "600", paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.sm, backgroundColor: "#E6F3EF", overflow: "hidden" },
+  historyRowBadge: { color: colors.primary, fontSize: 11, fontWeight: "600", paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.sm, backgroundColor: colors.primarySoft, overflow: "hidden" },
   historyRowSummary: { color: colors.textMuted, fontSize: 13 },
   historyRowMeta: { color: colors.textMuted, fontSize: 11 },
   historyPreviewContent: { padding: spacing.lg, paddingBottom: spacing.xl, gap: spacing.sm },
@@ -1296,7 +1296,7 @@ const styles = StyleSheet.create({
   // 不留就顶到屏幕缘；三者用同一个值，左缘才对齐成一条线。
   exportFormatRow: { flexDirection: "row", gap: spacing.xs, paddingHorizontal: spacing.lg, paddingBottom: spacing.xs },
   exportFormatChip: { flex: 1, minHeight: 38, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.surface },
-  exportFormatChipActive: { borderColor: colors.primary, backgroundColor: "#E6F3EF" },
+  exportFormatChipActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   exportFormatText: { color: colors.textMuted, fontSize: 13, fontWeight: "600" },
   exportFormatTextActive: { color: colors.primary },
   exportFormatHint: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xs, color: colors.textMuted, fontSize: 12, lineHeight: 18 },
@@ -1305,4 +1305,4 @@ const styles = StyleSheet.create({
   exportOptionText: { flex: 1, minWidth: 0, gap: 2 },
   exportOptionTitle: { color: colors.text, fontSize: 16, fontWeight: "700" },
   exportOptionMeta: { color: colors.textMuted, fontSize: 12 },
-});
+}));

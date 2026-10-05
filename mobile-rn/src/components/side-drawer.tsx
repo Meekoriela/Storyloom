@@ -4,7 +4,7 @@ import { Animated, BackHandler, Dimensions, Easing, PanResponder, Pressable, Sty
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { PlainScrollView, ScalePress } from "@/components/ui";
-import { colors, radius, spacing } from "@/theme";
+import { colors, radius, spacing, themedStyles } from "@/theme";
 
 const DRAWER_WIDTH_RATIO = 0.76;
 
@@ -138,7 +138,7 @@ export function SideDrawer({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   host: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 20 },
   backdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: colors.overlaySoft },
   backdropPress: { flex: 1 },
@@ -171,4 +171,4 @@ const styles = StyleSheet.create({
   panelMeta: { color: colors.textMuted, fontSize: 11 },
   iconButton: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   panelBody: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },
-});
+}));

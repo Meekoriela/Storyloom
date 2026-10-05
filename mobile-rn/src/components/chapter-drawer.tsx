@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { SideDrawer } from "@/components/side-drawer";
-import { colors, spacing } from "@/theme";
+import { colors, spacing, themedStyles } from "@/theme";
 import type { Chapter, Project, Volume } from "@/types";
 
 import { ScalePress } from "@/components/ui";
@@ -287,7 +287,7 @@ export function ChapterDrawer({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -297,7 +297,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   // 当前作品：整行浅主色底，文字与计数随主色。
-  projectRowActive: { backgroundColor: "#E6F3EF" },
+  projectRowActive: { backgroundColor: colors.primarySoft },
   rowMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 44 },
   rowPressed: { backgroundColor: colors.surfaceMuted },
   projectTitle: { flex: 1, minWidth: 0, color: colors.text, fontSize: 15, fontWeight: "600" },
@@ -334,4 +334,4 @@ const styles = StyleSheet.create({
   actionTextDanger: { color: colors.danger },
   actionTextDisabled: { color: colors.textMuted },
   empty: { paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, color: colors.textMuted, fontSize: 12, lineHeight: 20 },
-});
+}));

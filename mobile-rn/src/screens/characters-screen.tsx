@@ -25,7 +25,7 @@ import { logImportBreadcrumb, parseCharacterCard, pickSillyTavernFile } from "@/
 import { createId } from "@/lib/id";
 import type { RootStackParamList } from "@/navigation/types";
 import { useAppStore } from "@/store/app-store";
-import { colors, radius, spacing } from "@/theme";
+import { colors, radius, spacing, themedStyles } from "@/theme";
 import type { Character, Project } from "@/types";
 
 /**
@@ -371,7 +371,7 @@ export function CharactersScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles((colors, shadow) => StyleSheet.create({
   headerActions: { flexDirection: "row", alignItems: "center" },
   iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   searchWrap: { padding: spacing.lg, paddingBottom: spacing.sm },
@@ -383,7 +383,7 @@ const styles = StyleSheet.create({
   rowPressed: { backgroundColor: colors.surfaceMuted },
   avatar: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary, overflow: "hidden" },
   avatarImage: { width: 52, height: 52 },
-  avatarText: { color: "#FFFFFF", fontSize: 22, fontWeight: "700" },
+  avatarText: { color: colors.onPrimary, fontSize: 22, fontWeight: "700" },
   imageRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   imagePreview: { width: 84, height: 84, borderRadius: radius.md, backgroundColor: colors.surfaceMuted },
   imagePlaceholder: { alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border },
@@ -403,4 +403,4 @@ const styles = StyleSheet.create({
   switchRow: { minHeight: 50, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   switchLabel: { color: colors.text, fontSize: 15, fontWeight: "600" },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm, marginTop: spacing.md },
-});
+}));
