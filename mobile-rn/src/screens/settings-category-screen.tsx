@@ -89,6 +89,8 @@ import {
 import {
   checkAppUpdate,
   getLastAppUpdateCheck,
+  getAutoCheckUpdate,
+  setAutoCheckUpdate,
   CURRENT_APP_VERSION,
   type AppUpdateInfo,
 } from "@/settings/app-update";
@@ -361,6 +363,8 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
   const [appUpdateBusy, setAppUpdateBusy] = useState(false);
   const [appUpdateError, setAppUpdateError] = useState<string | null>(null);
+  // 启动时是否自动检查更新。弹窗上「关闭自动更新」写的也是这个键。
+  const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
   // 应用内更新：下载进度状态
   const [apkBusy, setApkBusy] = useState(false);
   const [apkProgress, setApkProgress] = useState("");
@@ -591,7 +595,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     setLoading(true);
     setError(null);
     try {
-      const [nextIndex, nextRules, nextSkills, nextAgents, nextPermissions, nextWriteApproval, active, history, compress, autoSave, fontSize, fontFamily, chatFontSizeRaw, chatFontFamilyRaw, contextWindowRaw, nextModels, nextOhStoryState, nextResourceState] = await Promise.all([
+      const [nextIndex, nextRules, nextSkills, nextAgents, nextPermissions, nextWriteApproval, active, history, compress, autoSave, fontSize, fontFamily, chatFontSizeRaw, chatFontFamilyRaw, contextWindowRaw, nextModels, nextOhStoryState, nextResourceState, nextAutoCheck] = await Promise.all([
         getIndexSettings(),
         getAgentRules(),
         getAgentSkills(),
@@ -610,8 +614,10 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
         listModels(),
         getOhStoryUpdateState(),
         getRuntimeResourceState(),
+        getAutoCheckUpdate(),
       ]);
       setAppUpdate(await getLastAppUpdateCheck());
+      setAutoCheckUpdate(nextAutoCheck);
       setIndexSettings(nextIndex);
       setIndexDraft(draftFromSettings(nextIndex));
       setRules(nextRules);
@@ -1647,6 +1653,14 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
       {category === "advanced" ? (
         <View style={styles.section}>
           <Text style={styles.subsectionTitle}>应用版本</Text>
+          <ToggleRow
+            label="启动时自动检查更新"
+            value={autoCheckUpdate}
+            onChange={(value) => {
+              setAutoCheckUpdate(value);
+              void setAutoCheckUpdate(value);
+            }}
+          />
           <SettingRow label="当前版本" value={CURRENT_APP_VERSION} />
           <SettingRow
             label="最新版本"

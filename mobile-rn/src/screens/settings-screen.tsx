@@ -9,6 +9,7 @@ import { ActivityIndicator, BackHandler, FlatList, Pressable, StyleSheet, Text, 
 
 import { BottomSheet, Button, ConfirmDialog, ErrorNotice, Field, Header, NoticeToast, PlainScrollView, ScalePress, Screen, useNotice } from "@/components/ui";
 import {
+  deleteModel,
   deleteProvider,
   getProviderApiKey,
   getSetting,
@@ -34,6 +35,7 @@ import { guessModelCapabilities } from "@/settings/model-capabilities";
 import { CONTEXT_WINDOW_KEY } from "@/agent/context-usage";
 import { useAppStore } from "@/store/app-store";
 import { colors, radius, spacing, themedStyles } from "@/theme";
+import { useAppearance } from "@/theme-context";
 import type { Model, Provider, ProviderType } from "@/types";
 import { FreeModelsScreen } from "@/screens/free-models-screen";
 
@@ -210,6 +212,10 @@ function AdvancedFields({ value, onChange }: { value: ProviderAdvanced; onChange
 }
 
 export function SettingsScreen() {
+  // 订阅外观档位：样式表由 themedStyles 的 Proxy 在**读样式键时**才重建，而 StyleSheet.create
+  // 的结果会随元素 props 一起固化 —— 屏组件不重渲染，它产出的元素就还带着上一档的 style 引用。
+  // 外壳 Screen 订阅只能让外壳换色，屏内元素仍旧停在旧档（背景变了、正文没变）。
+  useAppearance();
   const rootNavigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const revision = useAppStore((state) => state.dataRevision);
   const refreshData = useAppStore((state) => state.refreshData);
@@ -392,6 +398,21 @@ export function SettingsScreen() {
     try {
       await deleteProvider(provider);
       refreshData();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : String(deleteError));
+    }
+  };
+
+  /**
+   * 删掉一个模型，供应商与它的其他模型留着。
+   * 此前模型行只有「设为默认」与「长按对话设置」，删除只有供应商行那颗垃圾桶 ——
+   * `deleteProvider` 会把这一家的模型全部连带删掉，所以「只想删掉其中一个」没有出口。
+   */
+  const removeModel = async (model: Model) => {
+    try {
+      await deleteModel(model);
+      refreshData();
+      showNotice("已删除该模型");
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : String(deleteError));
     }
@@ -915,6 +936,26 @@ export function SettingsScreen() {
                 }
               }} />
             </View>
+            {/* 删除是破坏性动作：走确认卡，且不与上面的保存并排 —— 并排容易被当成同一组，
+                顺手点下去就是删一个模型。
+                确认卡与本面板都是 Modal，直接在面板里弹会叠两层；先把面板收掉再弹卡，
+                与供应商删除、抽屉重命名那几处同一处理。 */}
+            <Button
+              label="删除此模型"
+              variant="secondary"
+              onPress={() => {
+                if (!convSheetModel) return;
+                const target = convSheetModel;
+                setConvSheetModel(null);
+                setConfirmRequest({
+                  title: "删除模型",
+                  message: `删除「${target.name}」？供应商与它的其他模型不受影响。`,
+                  confirmLabel: "删除",
+                  danger: true,
+                  onConfirm: () => void removeModel(target),
+                });
+              }}
+            />
           </View>
         </BottomSheet>
       <BottomSheet

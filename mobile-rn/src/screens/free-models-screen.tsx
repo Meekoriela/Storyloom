@@ -10,6 +10,7 @@ import { DEFAULT_MAX_OUTPUT_TOKENS } from "@/llm/limits";
 import { FREE_MODELS, type FreeModel } from "@/settings/free-models";
 import { guessModelCapabilities } from "@/settings/model-capabilities";
 import { colors, spacing, themedStyles } from "@/theme";
+import { useAppearance } from "@/theme-context";
 
 /**
  * 免费模型专区：独立分类页。
@@ -21,6 +22,10 @@ import { colors, spacing, themedStyles } from "@/theme";
  * 清单是本地模板（`settings/free-models.ts`），不依赖任何服务端。
  */
 export function FreeModelsScreen({ onBack, onSaved }: { onBack: () => void; onSaved: (message: string) => void }) {
+  // 订阅外观档位：样式表由 themedStyles 的 Proxy 在**读样式键时**才重建，而 StyleSheet.create
+  // 的结果会随元素 props 一起固化 —— 屏组件不重渲染，它产出的元素就还带着上一档的 style 引用。
+  // 外壳 Screen 订阅只能让外壳换色，屏内元素仍旧停在旧档（背景变了、正文没变）。
+  useAppearance();
   const [expandedPlatform, setExpandedPlatform] = useState("");
   const [pickedModelIds, setPickedModelIds] = useState<Record<string, string>>({});
   const [apiKey, setApiKey] = useState("");

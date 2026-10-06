@@ -9,6 +9,8 @@ const REPOSITORY = "Meekoriela/Storyloom";
 const RELEASE_API = `https://api.github.com/repos/${REPOSITORY}/releases/latest`;
 const RELEASE_PAGE = `https://github.com/${REPOSITORY}/releases`;
 const LAST_CHECK_KEY = "app.update.lastCheck";
+/** 启动时是否自动检查更新。缺省为开；弹窗上「关闭自动更新」写的也是这个键。 */
+export const AUTO_CHECK_KEY = "app.update.autoCheck";
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_NOTES_CHARACTERS = 4_000;
 
@@ -87,6 +89,20 @@ export async function getLastAppUpdateCheck(): Promise<AppUpdateInfo | null> {
     hasUpdate,
     notes: hasUpdate ? stored.notes : "",
   };
+}
+
+/** 启动时是否自动检查更新。读不到按「开」处理 —— 保持既有行为。 */
+export async function getAutoCheckUpdate(): Promise<boolean> {
+  try {
+    return (await getSetting(AUTO_CHECK_KEY)) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+/** 打开或关闭启动时的自动检查。设置页的开关与弹窗里「关闭自动更新」共用这一个键。 */
+export async function setAutoCheckUpdate(enabled: boolean): Promise<void> {
+  await setSetting(AUTO_CHECK_KEY, enabled ? "true" : "false");
 }
 
 /** 下载更新包并调起系统安装界面（更新弹窗与设置页共用）。 */

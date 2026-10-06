@@ -5,7 +5,7 @@ import { createBottomTabNavigator, type BottomTabBarButtonProps } from "@react-n
 import { NavigationContainer, DarkTheme, DefaultTheme } from "@react-navigation/native";
 import { PlatformPressable } from "@react-navigation/elements";
 import { appendBreadcrumb } from "@/lib/crash-log";
-import { checkAppUpdate, downloadAndInstallUpdate, type AppUpdateInfo } from "@/settings/app-update";
+import { checkAppUpdate, downloadAndInstallUpdate, getAutoCheckUpdate, setAutoCheckUpdate, type AppUpdateInfo } from "@/settings/app-update";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -251,14 +251,13 @@ const styles = themedStyles((colors) => StyleSheet.create({
   updateNoteRow: { flexDirection: "row", gap: 6, marginTop: 4 },
   updateNoteBullet: { color: colors.primary, fontSize: 13, lineHeight: 20 },
   updateNoteText: { flex: 1, fontSize: 13, lineHeight: 20, color: colors.textFaint },
-  updateDetail: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 12, backgroundColor: colors.surfaceMuted },
-  updateDetailText: { color: colors.text, fontSize: 14, fontWeight: "600" },
-  updateActions: { flexDirection: "row", gap: 10, marginTop: 16 },
-  updateLater: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 12, backgroundColor: colors.surfaceMuted },
-  updateLaterText: { color: colors.text, fontSize: 14, fontWeight: "600" },
-  updateNow: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 12, backgroundColor: colors.primary },
+  // 更新弹窗的四个动作竖排、贴右下角（对照参考图）：关闭自动更新 / 稍后 / 查看详情 / 立即更新。
+  // 「立即更新」是唯一的主操作，其余三项都是文字动作，不做成色块 —— 竖排时色块会喧宾夺主。
+  updateActions: { alignItems: "flex-end", marginTop: 14 },
+  updateAction: { paddingVertical: 7 },
+  updateActionText: { fontSize: 14, fontWeight: "600", color: colors.text },
   updateNowBusy: { opacity: 0.6 },
-  updateNowText: { color: colors.onPrimary, fontSize: 14, fontWeight: "700" },
+  updateNowText: { fontSize: 14, fontWeight: "700", color: colors.accent },
   resourceGate: { flex: 1, justifyContent: "center", padding: 28, backgroundColor: colors.background },
   resourceLoading: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, backgroundColor: colors.background },
   resourceTitle: { color: colors.text, fontSize: 28, fontWeight: "800" },
@@ -301,6 +300,7 @@ function AppUpdatePopup() {
   useEffect(() => {
     void (async () => {
       try {
+        if (!(await getAutoCheckUpdate())) return;
         const result = await checkAppUpdate();
         if (result?.hasUpdate) { setInfo(result); setCountdown(10); }
       } catch {}
@@ -338,11 +338,21 @@ function AppUpdatePopup() {
             )}
           </AdaptiveScroll>
           <View style={styles.updateActions}>
-            <Pressable disabled={busy} onPress={() => setInfo(null)} style={styles.updateLater}>
-              <Text style={styles.updateLaterText}>稍后</Text>
+            <Pressable
+              disabled={busy}
+              onPress={() => {
+                void setAutoCheckUpdate(false);
+                setInfo(null);
+              }}
+              style={styles.updateAction}
+            >
+              <Text style={styles.updateActionText}>关闭自动更新</Text>
             </Pressable>
-            <Pressable disabled={busy} onPress={() => void Linking.openURL(info.releaseUrl)} style={styles.updateDetail}>
-              <Text style={styles.updateDetailText}>查看详情</Text>
+            <Pressable disabled={busy} onPress={() => setInfo(null)} style={styles.updateAction}>
+              <Text style={styles.updateActionText}>稍后</Text>
+            </Pressable>
+            <Pressable disabled={busy} onPress={() => void Linking.openURL(info.releaseUrl)} style={styles.updateAction}>
+              <Text style={styles.updateActionText}>查看详情</Text>
             </Pressable>
             <Pressable
               disabled={busy || !info.apkUrl}
@@ -360,7 +370,7 @@ function AppUpdatePopup() {
                   }
                 })();
               }}
-              style={[styles.updateNow, busy && styles.updateNowBusy]}
+              style={[styles.updateAction, busy && styles.updateNowBusy]}
             >
               <Text style={styles.updateNowText}>{busy ? "更新中…" : "立即更新"}</Text>
             </Pressable>

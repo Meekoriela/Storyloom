@@ -60,6 +60,7 @@ import { editorFontFamily, readEditorPrefs, type EditorFontId } from "@/settings
 import { evolveAuthorStyle } from "@/settings/lorn-style-plugin";
 import { useAppStore } from "@/store/app-store";
 import { colors, radius, spacing, themedStyles } from "@/theme";
+import { useAppearance } from "@/theme-context";
 import type { Chapter, ChapterDraftSnapshot, ChapterVersion, Project, StyleProfile, Volume } from "@/types";
 
 const AUTO_SAVE_DELAY_MS = 1_000;
@@ -173,6 +174,10 @@ type ConfirmRequest = {
 };
 
 export function WritingScreen() {
+  // 订阅外观档位：样式表由 themedStyles 的 Proxy 在**读样式键时**才重建，而 StyleSheet.create
+  // 的结果会随元素 props 一起固化 —— 屏组件不重渲染，它产出的元素就还带着上一档的 style 引用。
+  // 写作页是静止页（没有任何周期性重渲染），所以切档位后正文整段停在旧色，点别处才重渲染。
+  useAppearance();
   const projectId = useAppStore((state) => state.currentProjectId);
   const setCurrentProject = useAppStore((state) => state.setCurrentProject);
   const currentChapterId = useAppStore((state) => state.currentChapterId);

@@ -11,7 +11,13 @@ import {
   View,
 } from "react-native";
 import { KeyboardAvoidingView as KeyboardAvoider } from "react-native-keyboard-controller";
+import Svg, { Path } from "react-native-svg";
 import { AdaptiveScroll } from "@/components/ui";
+import {
+  TIMELINE_ICON_STROKE,
+  glyphOf,
+  type TimelineIconName,
+} from "@/components/timeline-icons";
 import { colors, radius, spacing, themedStyles } from "@/theme";
 import type {
   AgentClarificationAnswer,
@@ -34,29 +40,81 @@ import type {
 const MONO_FONT = Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" });
 
 /**
- * 行首的节点，一个标记同时承担"节点"与"状态"：跑着是转圈、完成是实心或空心、失败是叉。
+ * 一个节点图形：等比缩放到 `size`，同色描边一层加粗。
  *
- * 三档直径 **14 / 12 / 10**，一级实心、二级三级都空心 —— 二级比三级大 2dp，
+ * `size` 是这个图形占的那一档宽度（12 / 10），与原来的图标同宽，所以缩进与行高不变。
+ * 描边宽按档位取：二级 8、三级 6 —— 三级图形更小，同一个描边宽看起来会和二级一样重。
+ *
+ * 颜色在函数体内读 `colors`：写进参数默认值会在模块加载时求值定死，切档位时就不跟了。
+ */
+function TimelineGlyph({
+  name,
+  size,
+  color,
+}: {
+  name: TimelineIconName;
+  size: number;
+  color?: string;
+}) {
+  const glyph = glyphOf(name);
+  const [x0, y0, x1, y1] = glyph.box;
+  const w = x1 - x0;
+  const h = y1 - y0;
+  const tint = color ?? colors.textMuted;
+  return (
+    <Svg width={size} height={size} viewBox={`${x0} ${y0} ${w} ${h}`}>
+      <Path
+        d={glyph.d}
+        fill={tint}
+        stroke={tint}
+        strokeWidth={size >= 12 ? TIMELINE_ICON_STROKE.sub : TIMELINE_ICON_STROKE.child}
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+/** 三级事件类型 → 图形。缺省按工具给，tool 是最常见的一类。 */
+const CHILD_ICON: Record<AgentTraceEventKind, TimelineIconName> = {
+  tool: "tool",
+  question: "question",
+  skill: "skill",
+  agent: "agent",
+  consistency: "consistency",
+};
+
+/**
+ * 行首的节点。
+ *
+ * 三档直径 **14 / 12 / 10**，一级实心、二级与三级都用矢量图形 —— 二级比三级大 2dp，
  * 这样"执行完成"那一行一眼就大于下面每一次调用，不会出现二级比三级小的倒挂。
  * 失败叉的尺寸跟着同档直径走（13 / 12 / 10），不另定一套数。
  *
- * 二级（`level === "sub"`）不用圆圈，按 `variant` 给两个不同图标：
- * 思考段是灯泡、调用组是终端 —— 圆圈只表达层级，图标额外说明这一组在干什么。
- * 图标与原来的圆环同宽（12），所以缩进与行高都不受影响。
- * 一级保留实心点：它兼状态（跑着转圈、失败变叉），换成图标反而丢状态。
+ * 二级按 `variant` 给两个不同图形：思考段是灯泡、调用组是终端。
+ * 三级按事件类型给五个（工具 / 提问 / 技能 / 子智能体 / 一致性）——
+ * 三级那一行只有一句话，图形让人一眼认出是哪类操作，不必读文字。
  *
- * 行里不再另放类型图标 —— 在干什么由那一行的文字说（工具名、技能名、提问），
+ * 二级三级都用矢量绘制而不是图标字体：字体的线宽烤在字形里，没法加粗。
+ * 字形轮廓是闭合填充路径，叠一层同色描边就等效加粗，描边宽是连续可调的参数。
+ * 三级的描边比二级细一号 —— 图形更小，同一个描边宽在屏幕上会和二级一样重，层级就拉不开。
+ *
+ * 一级保留实心点：它兼状态（跑着转圈、失败变叉），换成图形反而丢状态。
+ *
+ * 行里不再另放类型图形 —— 在干什么由那一行的文字说（工具名、技能名、提问），
  * 图形再说一遍就是同一件事写两遍。
  */
 function TraceNode({
   status,
   level = "child",
   variant = "tool",
+  kind,
 }: {
   status: AgentTraceEventStatus;
   level?: "lead" | "sub" | "child";
-  /** 二级用哪个图标；一级与三级忽略。 */
+  /** 二级用哪个图形；一级与三级忽略。 */
   variant?: "thinking" | "tool";
+  /** 三级用哪个图形；一级与二级忽略。 */
+  kind?: AgentTraceEventKind;
 }) {
   if (status === "running" || status === "waiting") {
     return <ActivityIndicator size="small" color={colors.primary} />;
@@ -67,9 +125,9 @@ function TraceNode({
   }
   if (level === "lead") return <View style={styles.nodeLead} />;
   if (level === "sub") {
-    return <Ionicons name={variant === "thinking" ? "bulb-outline" : "terminal-outline"} size={12} color={colors.textMuted} />;
+    return <TimelineGlyph name={variant === "thinking" ? "bulb" : "terminal"} size={12} />;
   }
-  return <View style={[styles.nodeChild, styles.nodeChildHollow]} />;
+  return <TimelineGlyph name={CHILD_ICON[kind ?? "tool"]} size={10} />;
 }
 
 function runStatus(trace: AgentRunTrace): { label: string; color: string } {
@@ -187,7 +245,7 @@ function TraceEventRow({ event }: { event: AgentTraceEvent }) {
         style={styles.eventHeader}
       >
         <View style={styles.nodeSlotChild}>
-          <TraceNode status={event.status} />
+          <TraceNode status={event.status} kind={event.kind} />
         </View>
         <View style={styles.eventCopy}>
           <View style={styles.eventTitleLine}>
@@ -442,7 +500,8 @@ export function AgentTraceView({
           <TraceNode status={nodeStatus} level="lead" />
         </View>
         <Text style={[styles.traceStatus, { color: status.color }]} numberOfLines={1}>{status.label}</Text>
-        <View style={styles.traceSpacer} />
+        {/* 用时与字数紧跟状态词，箭头紧跟用时 —— 中间不放弹性占位。
+            容器宽度恒定（见下方 `trace`），所以任何占位都会把【用时·字数】连同箭头整块推到行末。 */}
         {elapsedLabel ? <Text style={styles.traceElapsed}>{elapsedLabel}</Text> : null}
         <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={18} color={colors.textMuted} />
       </Pressable>
@@ -631,7 +690,10 @@ export function AgentQuestionSheet({
 
 const styles = themedStyles((colors, shadow) => StyleSheet.create({
   // 组根：不画外框与底色，状态行与后续轨迹直接落在消息/实时时间线上。
-  trace: { alignSelf: "flex-start", flexShrink: 1, maxWidth: "88%" },
+  // 宽度跟着父级而不是内容：这一组下面要展开思考正文与参数/结果，内容长短不一。
+  // 若按内容收缩（flex-start），展开后整组变宽、组头那行也跟着变宽，展开时内容会横向挪动，
+  // 而且是累积的 —— 展开二级挪一点，再展开三级又挪一点。撑满后宽度恒定，位置不再变。
+  trace: { alignSelf: "stretch", maxWidth: "88%" },
   traceInline: { borderWidth: 0, borderRadius: 0, backgroundColor: "transparent" },
   // 层级由"各行的 paddingLeft + 节点容器宽度"共同决定，动其中一处要一起看。一档取 8：
   // 深一档只是"往里让一点"（20 太松、12 看着仍远），三级正文被推得太靠右时一条消息里显空。
@@ -640,15 +702,12 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   //   第二级（思考/执行完成）paddingLeft 8 + nodeSlotSub 12  ⇒ 文字 28
   //   第三级（一次调用）   paddingLeft 16 + nodeSlotChild 10 ⇒ 文字 34
   // 节点直径三档 **14 / 12 / 10**，二级比三级大 2dp —— 出现二级小于三级就等于把层级说反了。
-  // 形态：一级实心点，二级用图标（灯泡 / 终端），三级空心圈。二级图标是 12 的 Ionicons，
-  // 与 `nodeSlotSub` 同宽，所以缩进与行高都不受换图影响。
-  // 三级那个圆环描边与节点分开两个样式，是为了失败时能只换描边颜色而不动直径。
+  // 形态：一级实心点，二级与三级都用矢量图形（见 `TimelineGlyph`）。二级三级与各自的
+  // `nodeSlot*` 同宽，所以缩进与行高都不受换图影响。
   nodeSlotLead: { width: 14, alignItems: "center", justifyContent: "center" },
   nodeLead: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.primary },
   nodeSlotSub: { width: 12, alignItems: "center", justifyContent: "center" },
   nodeSlotChild: { width: 10, alignItems: "center", justifyContent: "center" },
-  nodeChild: { width: 10, height: 10, borderRadius: 5 },
-  nodeChildHollow: { borderWidth: 1.5, borderColor: colors.textMuted },
   // 组头：节点左缘与正文左缘对齐（圆心 = 半径 7），所以左侧不留内边距。
   traceHeader: {
     minHeight: 42,
@@ -658,7 +717,6 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   traceStatus: { flexShrink: 0, fontSize: 13, fontWeight: "700" },
-  traceSpacer: { flex: 1 },
   traceElapsed: { flexShrink: 0, color: colors.textMuted, fontSize: 12 },
   events: {},
   // 第二级「执行完成」：与「思考过程」同一档缩进与同一个节点标记，差别只在于它下面

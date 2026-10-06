@@ -18,6 +18,7 @@ import { createCategory, createProject, deleteCategory, deleteProject, getProjec
 import type { RootStackParamList, RootTabParamList } from "@/navigation/types";
 import { useAppStore } from "@/store/app-store";
 import { colors, radius, shadow, spacing, themedStyles } from "@/theme";
+import { useAppearance } from "@/theme-context";
 import type { Category, Project } from "@/types";
 
 /** 书架样式：网格（书封朝上）／列表（书封朝左）／书脊（只看书脊，竖排书名）。 */
@@ -67,6 +68,10 @@ const PLANK_FOOT_RATIO = 0.52;
 const PLANK_IMAGE = require("../../assets/images/shelf-plank.png");
 
 export function ProjectsScreen() {
+  // 订阅外观档位：样式表由 themedStyles 的 Proxy 在**读样式键时**才重建，而 StyleSheet.create
+  // 的结果会随元素 props 一起固化 —— 屏组件不重渲染，它产出的元素就还带着上一档的 style 引用。
+  // 外壳 Screen 订阅只能让外壳换色，屏内元素仍旧停在旧档（背景变了、正文没变）。
+  useAppearance();
   const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList>>();
   const rootNavigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [projects, setProjects] = useState<Project[]>([]);

@@ -168,7 +168,7 @@ export const agentTools: AgentToolDefinition[] = [
               description: { type: "string", description: "必要的背景或影响说明" },
               options: {
                 type: "array",
-                description: "可选建议；推荐项放在首位并在标签后注明（推荐）",
+                description: "必填；至少两个方向，推荐项放在首位并在标签后注明（推荐）",
                 items: {
                   type: "object",
                   properties: {

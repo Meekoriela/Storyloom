@@ -829,6 +829,27 @@ export async function deleteProvider(provider: Provider): Promise<void> {
   await SecureStore.deleteItemAsync(provider.apiKeyRef).catch(() => undefined);
 }
 
+/**
+ * 删除单个模型，供应商与它的其他模型不动。
+ *
+ * `deleteProvider` 是一家一起删的，所以「只想删掉这一个模型」这条路此前没有出口。
+ * 连带处理两处引用：默认模型指向它时清掉该设置（否则模型页会指向一个不存在的 id），
+ * 对话历史里绑定过它的会话置空（模型全局唯一后这些值不再参与发送，但留着会成为脏数据）。
+ * 该模型在 `context.override.<id>` 下的参数覆盖一并清掉，避免残留键。
+ */
+export async function deleteModel(model: Model): Promise<void> {
+  const db = await getDatabase();
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    const active = await txn.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = 'activeModelId'");
+    if (active?.value === model.id) {
+      await txn.runAsync("DELETE FROM app_settings WHERE key = 'activeModelId'");
+    }
+    await txn.runAsync("UPDATE chat_sessions SET model_id = NULL WHERE model_id = ?", model.id);
+    await txn.runAsync("DELETE FROM models WHERE id = ?", model.id);
+  });
+  await setSetting(`context.override.${model.id}`, "");
+}
+
 export async function listModels(providerId?: string): Promise<Model[]> {
   const db = await getDatabase();
   const rows = providerId

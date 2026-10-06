@@ -71,6 +71,7 @@ import type { RootTabParamList } from "@/navigation/types";
 import { getAgentDefinitions, getWriteApproval, saveWriteApproval, type WriteApprovalMode } from "@/settings/config";
 import { useAppStore } from "@/store/app-store";
 import { colors, radius, shadow, spacing, themedStyles } from "@/theme";
+import { useAppearance } from "@/theme-context";
 import type {
   AgentClarificationRequest,
   AgentClarificationResponse,
@@ -279,6 +280,10 @@ function retryRequestForMessage(
 }
 
 export function AssistantScreen() {
+  // 订阅外观档位：样式表由 themedStyles 的 Proxy 在**读样式键时**才重建，而 StyleSheet.create
+  // 的结果会随元素 props 一起固化 —— 屏组件不重渲染，它产出的元素就还带着上一档的 style 引用。
+  // 外壳 Screen 订阅只能让外壳换色，屏内元素仍旧停在旧档（背景变了、正文没变）。
+  useAppearance();
   const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList>>();
   const projectId = useAppStore((state) => state.currentProjectId);
   const setCurrentProject = useAppStore((state) => state.setCurrentProject);
@@ -1696,6 +1701,10 @@ export function AssistantScreen() {
         onClose={() => setDrawerVisible(false)}
         onSelectProject={(target) => {
           if (target.id === effectiveProjectId) return;
+          // 切作品前先收抽屉：抽屉列表与助手页主区会在同一帧各自重渲染
+          // （切作品还要跑一次 load() 的整页重载），两者叠在一起会掉一帧。
+          // 选对话那条本来就先收抽屉，这里与之对齐。
+          setDrawerVisible(false);
           setCurrentProject(target.id);
         }}
         onSelectSession={(target, session) => {

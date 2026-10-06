@@ -26,6 +26,7 @@ import {
 import type { RootStackParamList } from "@/navigation/types";
 import { useAppStore } from "@/store/app-store";
 import { colors, radius, spacing, themedStyles } from "@/theme";
+import { useAppearance } from "@/theme-context";
 import type { Chapter, Note, NoteScope, Volume } from "@/types";
 
 type Group = {
@@ -54,6 +55,10 @@ type ConfirmRequest = {
 };
 
 export function NotesScreen() {
+  // 订阅外观档位：样式表由 themedStyles 的 Proxy 在**读样式键时**才重建，而 StyleSheet.create
+  // 的结果会随元素 props 一起固化 —— 屏组件不重渲染，它产出的元素就还带着上一档的 style 引用。
+  // 外壳 Screen 订阅只能让外壳换色，屏内元素仍旧停在旧档（背景变了、正文没变）。
+  useAppearance();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const projectId = useAppStore((state) => state.currentProjectId);
   const [notes, setNotes] = useState<Note[]>([]);
