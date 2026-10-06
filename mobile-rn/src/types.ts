@@ -1,5 +1,13 @@
 export type ProviderType = "openai-compatible" | "google-genai" | "anthropic";
 
+/**
+ * 写作形式：作品的载体与篇幅。
+ *
+ * 三个取值与三个体裁智能体一一对应（长篇小说 / 短篇小说 / 剧本），新建作品时选定，
+ * 决定这部作品用哪个智能体。老作品与助手自建的「未命名」都没有设过。
+ */
+export type ProjectForm = "long-form" | "short-form" | "screenplay";
+
 export interface Project {
   id: string;
   title: string;
@@ -8,6 +16,8 @@ export interface Project {
   coverPath: string | null;
   /** 所属分类；未分类时为 null */
   categoryId: string | null;
+  /** 写作形式；老作品与助手自建的「未命名」未设过，为 null */
+  form: ProjectForm | null;
   createdAt: string;
   updatedAt: string;
 }

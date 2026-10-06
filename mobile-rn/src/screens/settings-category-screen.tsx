@@ -342,7 +342,6 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
   const [agentDescription, setAgentDescription] = useState("");
   const [agentPrompt, setAgentPrompt] = useState("");
   const [agentPromptExpanded, setAgentPromptExpanded] = useState(false);
-  const [agentModelId, setAgentModelId] = useState("");
   const [historyLimit, setHistoryLimit] = useState("30");
   const [contextWindow, setContextWindow] = useState(String(DEFAULT_CONTEXT_WINDOW_TOKENS));
   const [compression, setCompression] = useState(false);
@@ -900,7 +899,6 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     setAgentName(agent.name);
     setAgentDescription(agent.description);
     setAgentPrompt(agent.systemPrompt);
-    setAgentModelId(agent.modelId);
     setEditingAgentId(agent.id);
   };
 
@@ -909,13 +907,12 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     setAgentName("");
     setAgentDescription("");
     setAgentPrompt("");
-    setAgentModelId("");
   };
 
   const saveAgentEdit = async () => {
     if (!editingAgentId || !agentName.trim() || !agentPrompt.trim()) return;
     const next = agents.map((item) => item.id === editingAgentId
-      ? { ...item, name: agentName.trim(), description: agentDescription.trim(), systemPrompt: agentPrompt.trim(), modelId: agentModelId }
+      ? { ...item, name: agentName.trim(), description: agentDescription.trim(), systemPrompt: agentPrompt.trim() }
       : item);
     if (!await persistManagedState(next, saveAgentDefinitions, setAgents)) return;
     cancelEditAgent();
@@ -953,7 +950,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
       name: agentName.trim(),
       description: agentDescription.trim(),
       systemPrompt: agentPrompt.trim(),
-      modelId: agentModelId,
+      modelId: "",
       enabled: true,
       kind: "primary",
       skillIds: skills.filter((skill) => skill.enabled).map((skill) => skill.id),
@@ -966,7 +963,6 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
     setAgentName("");
     setAgentDescription("");
     setAgentPrompt("");
-    setAgentModelId("");
   };
 
   /** 直接设定某个工具的权限（取代原来的「点一下循环切换」）。 */
@@ -1575,7 +1571,6 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
                       <Text style={styles.modelHint}>
                         {agent.source === "builtin" ? "Storyloom 基础包" : agent.source === "remote" ? "oh-story 更新" : "自定义"} · {agent.skillIds.length} 个技能
                       </Text>
-                      {agent.modelId ? <Text style={styles.modelHint}>{availableModels.find((model) => model.id === agent.modelId)?.name ?? "模型已删除"}</Text> : null}
                     </View>
                     <Switch value={agent.enabled} onValueChange={(enabled) => void toggleAgent(agent.id, enabled)} trackColor={{ false: colors.border, true: colors.primary }} />
                     {agent.kind === "primary" ? (
@@ -1612,17 +1607,6 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
           <Field label="智能体名称" value={agentName} onChangeText={setAgentName} />
           <Field label="智能体说明" value={agentDescription} onChangeText={setAgentDescription} />
           <ExpandableField label="系统提示词" value={agentPrompt} onChangeText={setAgentPrompt} expanded={agentPromptExpanded} onToggle={() => setAgentPromptExpanded((value) => !value)} />
-          <Text style={styles.sectionHint}>智能体模型</Text>
-          <View style={styles.modelChoices}>
-            <Pressable onPress={() => setAgentModelId("")} style={[styles.modelChoice, !agentModelId && styles.modelChoiceActive]}>
-              <Text style={styles.modelChoiceText}>跟随全局</Text>
-            </Pressable>
-            {availableModels.map((model) => (
-              <Pressable key={model.id} onPress={() => setAgentModelId(model.id)} style={[styles.modelChoice, agentModelId === model.id && styles.modelChoiceActive]}>
-                <Text numberOfLines={1} style={styles.modelChoiceText}>{model.name}</Text>
-              </Pressable>
-            ))}
-          </View>
           {editingAgentId ? (
             <>
               <Button label="保存修改" onPress={() => void saveAgentEdit()} disabled={!agentName.trim() || !agentPrompt.trim()} />

@@ -10,11 +10,14 @@ export function MessageActionBar({
   onRetry,
   retryDisabled = false,
   prominentRetry = false,
+  onStartPlan,
 }: {
   content: string;
   onRetry: () => void;
   retryDisabled?: boolean;
   prominentRetry?: boolean;
+  /** 传入时多一颗「按这个计划开工」。只有计划类消息会传它。 */
+  onStartPlan?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -50,6 +53,18 @@ export function MessageActionBar({
         <Ionicons name="refresh-outline" size={15} color={prominentRetry ? colors.primary : colors.textMuted} />
         <Text style={[styles.actionText, prominentRetry && styles.prominentText]}>{retryDisabled ? "处理中" : "重试"}</Text>
       </Pressable>
+      {onStartPlan ? (
+        <Pressable
+          accessibilityLabel="按这个计划开工"
+          accessibilityRole="button"
+          disabled={retryDisabled}
+          onPress={onStartPlan}
+          style={({ pressed }) => [styles.action, retryDisabled && styles.disabled, pressed && !retryDisabled && styles.pressed]}
+        >
+          <Ionicons name="play-outline" size={15} color={colors.primary} />
+          <Text style={[styles.actionText, { color: colors.primary }]}>按这个计划开工</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

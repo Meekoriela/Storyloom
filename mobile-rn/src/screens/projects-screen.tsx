@@ -16,10 +16,11 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, Field, Header, PlainScrollView, ScalePress, Screen, TopSheet } from "@/components/ui";
 import { createCategory, createProject, deleteCategory, deleteProject, getProjectStats, getProjectStatsMap, getSetting, listCategories, listProjects, renameCategory, setProjectCategory, setSetting, updateProjectCover, updateProjectInfo, type ProjectStats } from "@/data/repositories";
 import type { RootStackParamList, RootTabParamList } from "@/navigation/types";
+import { PROJECT_FORMS, projectFormAgentId, projectFormLabel } from "@/settings/storyloom-presets";
 import { useAppStore } from "@/store/app-store";
 import { colors, radius, shadow, spacing, themedStyles } from "@/theme";
 import { useAppearance } from "@/theme-context";
-import type { Category, Project } from "@/types";
+import type { Category, Project, ProjectForm } from "@/types";
 
 /** 书架样式：网格（书封朝上）／列表（书封朝左）／书脊（只看书脊，竖排书名）。 */
 type ShelfViewMode = "grid" | "list" | "spine";
@@ -107,6 +108,9 @@ export function ProjectsScreen() {
   const [infoSaving, setInfoSaving] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  /** 新建作品时选定的写作形式；未选时「创建」不可用。 */
+  const [createForm, setCreateForm] = useState<ProjectForm | null>(null);
+  const [formPickerVisible, setFormPickerVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const setCurrentProject = useAppStore((state) => state.setCurrentProject);
   const currentProjectId = useAppStore((state) => state.currentProjectId);
@@ -233,13 +237,18 @@ export function ProjectsScreen() {
   }, [projects, sortedProjects, categories, selectedCategoryId, viewMode, shelfInnerWidth, stats]);
 
   const submit = async () => {
-    if (!title.trim()) return;
+    if (!title.trim() || !createForm) return;
     setSaving(true);
     setError(null);
     try {
-      const project = await createProject(title, description);
+      const project = await createProject(title, description, createForm);
+      // 形式决定这部作品用哪个智能体：写作品级键，别的作品不受影响；
+      // 没写过键的作品（老作品、助手自建的「未命名」）仍落回设置里的全局默认。
+      const agentId = projectFormAgentId(createForm);
+      if (agentId) await setSetting(`assistant.activeAgent.${project.id}`, agentId);
       setTitle("");
       setDescription("");
+      setCreateForm(null);
       setShowCreate(false);
       setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)]);
       openProject(project);
@@ -1004,6 +1013,7 @@ function coverColor(title: string): string {
       <Modal visible={categoryManagerVisible} transparent animationType="fade" onRequestClose={closeCategoryManager}>
         <TopSheet
         title={assignTarget ? "归入分类" : "分类管理"}
+        subtitle={assignTarget ? "归入后可按分类筛选书架" : "分类用于书架筛选，每部作品只归一个"}
         onClose={closeCategoryManager}
         avoidKeyboard
         >
@@ -1078,13 +1088,45 @@ function coverColor(title: string): string {
             <Text style={styles.modalTitle}>新建作品</Text>
             <Field label="书名" value={title} onChangeText={setTitle} autoFocus />
             <Field label="简介" value={description} onChangeText={setDescription} multiline />
+            {/* 形式决定这部作品用哪个体裁智能体，必须选。点开选而不摊在面板上：
+                形式以后变多时，这一行的高度与面板尺寸都不变。 */}
+            <View style={styles.formField}>
+              <Text style={styles.formLabel}>写作形式</Text>
+              <Pressable
+                accessibilityLabel="写作形式"
+                onPress={() => setFormPickerVisible(true)}
+                style={styles.formSelect}
+              >
+                <Text numberOfLines={1} style={[styles.formSelectValue, !createForm && styles.formSelectPlaceholder]}>
+                  {projectFormLabel(createForm) ?? "请选择"}
+                </Text>
+                <Ionicons name="chevron-down" size={17} color={colors.textMuted} />
+              </Pressable>
+            </View>
             <View style={styles.modalActions}>
               <Button label="取消" variant="secondary" onPress={() => setShowCreate(false)} />
-              <Button label="创建" onPress={() => void submit()} disabled={!title.trim()} loading={saving} />
+              <Button label="创建" onPress={() => void submit()} disabled={!title.trim() || !createForm} loading={saving} />
             </View>
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <BottomSheet visible={formPickerVisible} title="选择写作形式" onClose={() => setFormPickerVisible(false)}>
+        {PROJECT_FORMS.map((item) => {
+          const selected = createForm === item.id;
+          return (
+            <Pressable
+              key={item.id}
+              accessibilityLabel={item.label}
+              onPress={() => { setCreateForm(item.id); setFormPickerVisible(false); }}
+              style={({ pressed }) => [styles.menuRow, (pressed || selected) && styles.menuRowPressed]}
+            >
+              <Ionicons name={selected ? "radio-button-on" : "radio-button-off"} size={20} color={selected ? colors.primary : colors.textMuted} />
+              <Text style={styles.menuRowText}>{item.label}</Text>
+            </Pressable>
+          );
+        })}
+      </BottomSheet>
 
       {/* 先把卡收掉再执行动作：动作里可能开别的弹层，卡片留在上面会挡住新开的那一层。 */}
       <ConfirmDialog
@@ -1125,8 +1167,12 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   statsText: { flex: 1, color: colors.textMuted, fontSize: 10.5 },
   headerActions: { flexDirection: "row", alignItems: "center" },
   shelfRow: { paddingHorizontal: 14, marginBottom: 2 },
-  /** 层板色罩：浅色档近乎无感，深色档压暗那张浅木色的板。必须绝对定位铺满，自身不参与布局。 */
-  plankShade: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: colors.overlaySoft },
+  /**
+   * 层板色罩：**只在深色档压暗**那张浅木色的贴图，浅色档透明（贴图原色本来就是对的）。
+   * 用的是 `plankShade` 这个专用键而不是 `overlaySoft` —— 后者浅色档也压，压下去浅木色就成深棕。
+   * 必须绝对定位铺满，自身不参与布局。
+   */
+  plankShade: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: colors.plankShade },
   shelfBooks: { flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 6 },
   shelfCell: { alignItems: "center" },
   bookObject: { width: "100%", aspectRatio: 3 / 4, borderRadius: 2, overflow: "hidden", justifyContent: "center" },
@@ -1173,12 +1219,12 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   menuRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 52, paddingHorizontal: spacing.lg },
   menuRowPressed: { backgroundColor: colors.surfaceMuted },
   menuRowDisabled: { opacity: 0.55 },
-  shelfTitleButton: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  shelfTitleButton: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: colors.border },
   shelfTitleText: { color: colors.text, fontSize: 16, fontWeight: "700" },
   categoryPanel: { position: "absolute", top: 104, left: 16, right: 16, backgroundColor: colors.background, borderRadius: 12, borderWidth: 1, borderColor: colors.border, padding: spacing.sm, flexDirection: "row", flexWrap: "wrap", gap: 8, zIndex: 10, elevation: 8, shadowColor: "#000", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 10 },
   shelfChipsRow: { marginTop: 2 },
   shelfChipsContent: { flexDirection: "row", gap: 8, paddingHorizontal: 14, paddingVertical: 4 },
-  shelfChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  shelfChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.border },
   shelfChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   shelfChipText: { color: colors.text, fontSize: 13 },
   shelfChipTextActive: { color: colors.onPrimary },
@@ -1202,6 +1248,26 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   modalBackdrop: { flex: 1, justifyContent: "center", padding: spacing.lg, backgroundColor: colors.overlay },
   modalBody: { gap: spacing.lg, padding: spacing.xl, borderRadius: radius.md, backgroundColor: colors.background },
   modalTitle: { color: colors.text, fontSize: 20, fontWeight: "700" },
+  /**
+   * 写作形式这一行的取值照 `components/ui.tsx` 的 field / label / input 三个样式来。
+   * 它和上面的书名、简介在同一个字段列里，尺寸与描边要和它们一致，所以不另起一套数。
+   */
+  formField: { gap: spacing.sm },
+  formLabel: { color: colors.textMuted, fontSize: 13, fontWeight: "600" },
+  formSelect: {
+    minHeight: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.md,
+  },
+  formSelectValue: { flexShrink: 1, minWidth: 0, color: colors.text, fontSize: 16 },
+  formSelectPlaceholder: { color: colors.textMuted },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm },
 }));
 

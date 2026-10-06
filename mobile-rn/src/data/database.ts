@@ -342,6 +342,7 @@ async function migrate(database: SQLite.SQLiteDatabase): Promise<void> {
   await migrateChatSessions(database);
   await migrateModelCapabilities(database);
   await migrateProjectCover(database);
+  await migrateProjectForm(database);
   await migrateCategories(database);
   await migrateWorldInfoKeywords(database);
   await migrateStyleProfileSource(database);
@@ -396,6 +397,18 @@ async function migrateProjectCover(database: SQLite.SQLiteDatabase): Promise<voi
   const columns = await database.getAllAsync<{ name: string }>("PRAGMA table_info(projects)");
   if (!columns.some((column) => column.name === "cover_path")) {
     await database.execAsync("ALTER TABLE projects ADD COLUMN cover_path TEXT;");
+  }
+}
+
+/**
+ * 作品写作形式（长篇 / 短篇 / 剧本）：老库补一列。
+ *
+ * 只补列、不回填 —— 既有作品没有形式，界面上按「不显示标签、用全局默认智能体」呈现。
+ */
+async function migrateProjectForm(database: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await database.getAllAsync<{ name: string }>("PRAGMA table_info(projects)");
+  if (!columns.some((column) => column.name === "form")) {
+    await database.execAsync("ALTER TABLE projects ADD COLUMN form TEXT;");
   }
 }
 

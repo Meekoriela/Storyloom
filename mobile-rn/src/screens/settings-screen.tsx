@@ -912,6 +912,28 @@ export function SettingsScreen() {
                   });
                 }} />
               ) : null}
+              {/* 删除与恢复默认、保存同排。删除是破坏性动作，但这一排里三个都是"改完就走"的
+                  同级动作，另起一行会让它像面板底部的独立结论，反而更显眼。
+                  真正的拦截在确认卡上：点它先收掉本面板再弹卡（两个都是 Modal，直接在面板里弹会叠两层），
+                  与供应商删除、抽屉重命名那几处同一处理。 */}
+              {convScope === "model" ? (
+                <Button
+                  label="删除此模型"
+                  variant="secondary"
+                  onPress={() => {
+                    if (!convSheetModel) return;
+                    const target = convSheetModel;
+                    setConvSheetModel(null);
+                    setConfirmRequest({
+                      title: "删除模型",
+                      message: `删除「${target.name}」？供应商与它的其他模型不受影响。`,
+                      confirmLabel: "删除",
+                      danger: true,
+                      onConfirm: () => void removeModel(target),
+                    });
+                  }}
+                />
+              ) : null}
               <Button label="保存" onPress={() => {
                 const parsedHistory = Number(convHistory);
                 const parsedWindow = Number(convWindow);
@@ -936,26 +958,6 @@ export function SettingsScreen() {
                 }
               }} />
             </View>
-            {/* 删除是破坏性动作：走确认卡，且不与上面的保存并排 —— 并排容易被当成同一组，
-                顺手点下去就是删一个模型。
-                确认卡与本面板都是 Modal，直接在面板里弹会叠两层；先把面板收掉再弹卡，
-                与供应商删除、抽屉重命名那几处同一处理。 */}
-            <Button
-              label="删除此模型"
-              variant="secondary"
-              onPress={() => {
-                if (!convSheetModel) return;
-                const target = convSheetModel;
-                setConvSheetModel(null);
-                setConfirmRequest({
-                  title: "删除模型",
-                  message: `删除「${target.name}」？供应商与它的其他模型不受影响。`,
-                  confirmLabel: "删除",
-                  danger: true,
-                  onConfirm: () => void removeModel(target),
-                });
-              }}
-            />
           </View>
         </BottomSheet>
       <BottomSheet

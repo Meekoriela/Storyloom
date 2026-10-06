@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { SideDrawer } from "@/components/side-drawer";
+import { projectFormLabel } from "@/settings/storyloom-presets";
 import { colors, spacing, themedStyles } from "@/theme";
 import type { ChatSession, Project } from "@/types";
 
@@ -139,6 +140,7 @@ export function SessionDrawer({
       const sessions = sessionsByProject[project.id] ?? [];
       const projectMenu = "p:" + project.id;
       const isScratch = project.title === SCRATCH_PROJECT_TITLE;
+      const formLabel = projectFormLabel(project.form);
 
       return (
         <View key={project.id}>
@@ -152,6 +154,7 @@ export function SessionDrawer({
               <Text numberOfLines={1} style={[styles.projectTitle, isCurrent && styles.projectTitleActive]}>
                 {project.title}
               </Text>
+              {formLabel ? <Text style={styles.formTag}>{formLabel}</Text> : null}
               {isScratch ? <Text style={styles.scratchTag}>临时</Text> : null}
               <Text style={styles.count}>{sessions.length} 个对话</Text>
             </Pressable>
@@ -235,6 +238,8 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   projectTitleActive: { color: colors.primary },
   // 「临时」这个小标记是给系统自建作品用的，比正文小一号、颜色压到最淡。
   scratchTag: { color: colors.textMuted, fontSize: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: 5, paddingHorizontal: 4, paddingVertical: 1 },
+  // 写作形式标签：与「临时」同一套尺寸，只是语义不同 —— 一个是作品的属性，一个是作品的状态。
+  formTag: { color: colors.textMuted, fontSize: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: 5, paddingHorizontal: 4, paddingVertical: 1 },
   count: { flex: 1, color: colors.textMuted, fontSize: 11, textAlign: "right", marginRight: spacing.xs },
   sessionRow: {
     flexDirection: "row",

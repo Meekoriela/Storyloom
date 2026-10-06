@@ -37,7 +37,7 @@ import {
 } from "@/agent/context-usage";
 import { editorFontFamily, readChatPrefs } from "@/settings/editor-prefs";
 import { AgentQuestionSheet, AgentTraceView } from "@/components/agent-run-view";
-import { appendCrashLog } from "@/lib/crash-log";
+import { appendBreadcrumb, appendCrashLog } from "@/lib/crash-log";
 import { throttle } from "@/lib/debounce";
 import { MessageActionBar } from "@/components/message-action-bar";
 import { SessionDrawer } from "@/components/session-drawer";
@@ -68,7 +68,7 @@ import {
   setActiveStyleProfile,
 } from "@/data/style-repositories";
 import type { RootTabParamList } from "@/navigation/types";
-import { getAgentDefinitions, getWriteApproval, saveWriteApproval, type WriteApprovalMode } from "@/settings/config";
+import { getAgentDefinitions, getWriteApproval, saveWriteApproval, type AgentDefinition, type WriteApprovalMode } from "@/settings/config";
 import { useAppStore } from "@/store/app-store";
 import { colors, radius, shadow, spacing, themedStyles } from "@/theme";
 import { useAppearance } from "@/theme-context";
@@ -204,6 +204,14 @@ function activeSessionSettingKey(projectId: string): string {
   return `assistant.activeSession.${projectId}`;
 }
 
+/** 作品级智能体。留空表示这部作品跟随设置里的全局默认智能体。 */
+function activeAgentSettingKey(projectId: string): string {
+  return `assistant.activeAgent.${projectId}`;
+}
+
+/** Plan 只规划不动笔：它出的那条消息下方多一颗「按这个计划开工」。 */
+const PLAN_AGENT_ID = "builtin-agent--plan";
+
 function generatedSessionTitle(content: string): string {
   return content.replace(/\s+/g, " ").trim().slice(0, 24) || "新对话";
 }
@@ -309,6 +317,8 @@ export function AssistantScreen() {
   const [explicitModelId, setExplicitModelId] = useState<string | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [activeAgentName, setActiveAgentName] = useState("Build");
+  /** 可选的主智能体清单：选择模型面板的第二级用。 */
+  const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinition[]>([]);
   const [styleProfiles, setStyleProfiles] = useState<StyleProfile[]>([]);
   const [activeStyleProfile, setActiveStyleProfileState] = useState<StyleProfile | null>(null);
   const [selection, setSelection] = useState<ModelSelection | null>(null);
@@ -332,6 +342,8 @@ export function AssistantScreen() {
   const [mascotOffset, setMascotOffset] = useState({ x: 0, y: 0 });
   const [renameTitle, setRenameTitle] = useState("");
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
+  /** 选择模型面板的两级：model = 模型列表；agent = 智能体列表。同一张面板内换页。 */
+  const [agentPickerStep, setAgentPickerStep] = useState<"model" | "agent">("model");
   const [stylePickerVisible, setStylePickerVisible] = useState(false);
   const [updatingStyle, setUpdatingStyle] = useState(false);
   const [liveTrace, setLiveTrace] = useState<AgentRunTrace | null>(null);
@@ -394,6 +406,9 @@ export function AssistantScreen() {
     const noProject = !activeProjectId;
     setLoading(true);
     setError(null);
+    // 🔴 临时埋点（量完即删）：量「切作品」到底慢在哪一步。Date.now 记的是墙钟，
+    // 三段分别是：进函数 → 并行批完成 → 全部就位。用 breadcrumb 落盘，量完这行也删。
+    const __t0 = Date.now();
     try {
       const [
         nextProject,
@@ -402,6 +417,7 @@ export function AssistantScreen() {
         activeModelId,
         nextModels,
         nextProviders,
+        projectAgentId,
         activeAgentId,
         agents,
         nextStyleProfiles,
@@ -415,19 +431,22 @@ export function AssistantScreen() {
         getSetting("activeModelId"),
         listModels(),
         listProviders(),
+        getSetting(activeAgentSettingKey(activeProjectId ?? "")),
         getSetting("agent.activeDefinitionId"),
         getAgentDefinitions(),
         listStyleProfiles(activeProjectId ?? ""),
         getActiveStyleProfile(activeProjectId ?? ""),
         getWriteApproval(),
       ]);
+      const __t1 = Date.now();
       if (!noProject && !nextProject) throw new Error("作品不存在");
-      const activeAgent = agents.find((agent) => agent.id === activeAgentId && agent.enabled && agent.kind === "primary")
+      // 作品自己有就用作品的，没有就落回设置里的全局默认。
+      const activeAgent = agents.find((agent) => agent.id === projectAgentId && agent.enabled && agent.kind === "primary")
+        ?? agents.find((agent) => agent.id === activeAgentId && agent.enabled && agent.kind === "primary")
         ?? agents.find((agent) => agent.id === "builtin-agent--build" && agent.enabled)
         ?? agents.find((agent) => agent.enabled && agent.kind === "primary");
-      const nextDefaultModelId = nextModels.find((model) => model.id === activeAgent?.modelId)?.id
-        ?? nextModels.find((model) => model.id === activeModelId)?.id
-        ?? null;
+      // 模型只有一个来源：用户当前选定的那个（activeModelId）。智能体不再各自绑定模型。
+      const nextDefaultModelId = nextModels.find((model) => model.id === activeModelId)?.id ?? null;
       if (activeModelId && !nextModels.some((model) => model.id === activeModelId)) {
         await setSetting("activeModelId", "");
       }
@@ -461,10 +480,13 @@ export function AssistantScreen() {
       setExplicitModelId(activeModelId ?? null);
       setActiveAgentId(activeAgent?.id ?? null);
       setActiveAgentName(activeAgent?.name ?? "Build");
+      setAgentDefinitions(agents);
       setStyleProfiles(nextStyleProfiles);
       setActiveStyleProfileState(nextActiveStyleProfile);
       setSelection(nextSelection);
       setError(selectionError);
+      // 🔴 临时埋点（量完即删）：并行批 __t1-__t0，串行的消息与模型解析 __t2-__t1。
+      appendBreadcrumb(`__perf load 并行${__t1 - __t0}ms 全程${Date.now() - __t0}ms 作品=${activeProjectId ? "有" : "无"}`);
     } catch (loadError) {
       if (loadRequestRef.current !== requestId) return;
       setActiveSession(null);
@@ -773,6 +795,20 @@ export function AssistantScreen() {
     }
   };
 
+  /** 切换这部作品使用的智能体：只写当前作品那一份，其他作品不受影响。 */
+  const chooseAgent = async (agentId: string) => {
+    if (sending || !effectiveProjectId) return;
+    setError(null);
+    try {
+      await setSetting(activeAgentSettingKey(effectiveProjectId), agentId);
+      setActiveAgentId(agentId);
+      setActiveAgentName(agentDefinitions.find((agent) => agent.id === agentId)?.name ?? "Build");
+      setAgentPickerStep("model");
+    } catch (agentError) {
+      setError(agentError instanceof Error ? agentError.message : String(agentError));
+    }
+  };
+
   const chooseStyle = async (profile: StyleProfile | null) => {
     if (!effectiveProjectId || sending || updatingStyle) return;
     setUpdatingStyle(true);
@@ -977,9 +1013,9 @@ export function AssistantScreen() {
     resolver?.(response);
   };
 
-  const send = async (retry: RetryRequest | null = null) => {
-    const content = retry?.userMessage.content ?? input.trim();
-    const editTarget = !retry && editingMessageId
+  const send = async (retry: RetryRequest | null = null, composedContent?: string) => {
+    const content = retry?.userMessage.content ?? composedContent ?? input.trim();
+    const editTarget = !retry && !composedContent && editingMessageId
       ? messages.find((message) => message.id === editingMessageId && message.role === "user") ?? null
       : null;
     if (!content || sending) return;
@@ -1159,6 +1195,28 @@ export function AssistantScreen() {
       if (isCurrentRequest()) setSending(false);
     }
   };
+
+  /**
+   * 点「按这个计划开工」：把这份计划交给执行者继续。
+   *
+   * 执行者取这部作品当时指定的智能体；若它本身就是 Plan（Plan 只规划不动笔），退到
+   * Build。选定后写进作品级设置，与手动换智能体走同一条存储。计划本身已经在对话历史里，
+   * 这里只发一句指令，不重复贴一遍计划正文。
+   */
+  const startFromPlan = () => {
+    if (sending || !effectiveProjectId) return;
+    const followers = agentDefinitions.filter((agent) => agent.enabled && agent.kind === "primary");
+    const executor = activeAgentId === PLAN_AGENT_ID
+      ? followers.find((agent) => agent.id === "builtin-agent--build") ?? followers.find((agent) => agent.id !== PLAN_AGENT_ID)
+      : undefined;
+    if (executor) {
+      void setSetting(activeAgentSettingKey(effectiveProjectId), executor.id);
+      setActiveAgentId(executor.id);
+      setActiveAgentName(executor.name);
+    }
+    void send(null, "按上面的计划开工。");
+  };
+
   const contextUsage = useMemo(
     () => computeContextUsage(messages, contextWindow, historyLimit),
     [contextWindow, historyLimit, messages],
@@ -1196,7 +1254,7 @@ export function AssistantScreen() {
         <Pressable
           accessibilityLabel="切换助手模型"
           disabled={!models.length || sending}
-          onPress={() => setModelPickerVisible(true)}
+          onPress={() => { setAgentPickerStep("model"); setModelPickerVisible(true); }}
           style={styles.modelSelector}
         >
           <Ionicons name="hardware-chip-outline" size={17} color={selection ? colors.primary : colors.textMuted} />
@@ -1392,7 +1450,12 @@ export function AssistantScreen() {
               <Text selectable style={[styles.messageText, chatTextStyle]}>{item.content}</Text>
 
               {item.role === "assistant" && messageRetry ? (
-                <MessageActionBar content={item.content} onRetry={() => void send(messageRetry)} retryDisabled={sending} />
+                <MessageActionBar
+                  content={item.content}
+                  onRetry={() => void send(messageRetry)}
+                  retryDisabled={sending}
+                  onStartPlan={item.metadata?.agentTrace?.primaryAgentId === PLAN_AGENT_ID ? startFromPlan : undefined}
+                />
               ) : null}
                   </>
                 );
@@ -1611,9 +1674,40 @@ export function AssistantScreen() {
 
       <BottomSheet
         visible={modelPickerVisible}
-        title="选择模型"
-        onClose={() => setModelPickerVisible(false)}
+        title={agentPickerStep === "agent" ? "选择智能体" : "选择模型"}
+        onClose={() => {
+          setModelPickerVisible(false);
+          setAgentPickerStep("model");
+        }}
       >
+        {agentPickerStep === "agent" ? (
+          <FlatList
+            style={styles.panelList}
+            data={agentDefinitions.filter((agent) => agent.enabled && agent.kind === "primary")}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => {
+              const selected = activeAgentId === item.id;
+              return (
+                <Pressable onPress={() => void chooseAgent(item.id)} style={[styles.sheetRow, selected && styles.sheetRowActive]}>
+                  <Ionicons name={selected ? "radio-button-on" : "radio-button-off"} size={20} color={selected ? colors.primary : colors.textMuted} />
+                  <View style={styles.sheetRowText}>
+                    <Text style={styles.sheetRowTitle} numberOfLines={1}>{item.name}</Text>
+                    <Text style={styles.sheetRowMeta} numberOfLines={2}>{item.description}</Text>
+                  </View>
+                </Pressable>
+              );
+            }}
+          />
+        ) : (
+          <>
+            <Pressable onPress={() => setAgentPickerStep("agent")} style={styles.sheetRow}>
+              <Ionicons name="git-branch-outline" size={20} color={colors.primary} />
+              <View style={styles.sheetRowText}>
+                <Text style={styles.sheetRowTitle} numberOfLines={1}>{activeAgentName} 主智能体</Text>
+                <Text style={styles.sheetRowMeta} numberOfLines={1}>当前智能体</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            </Pressable>
           <FlatList
               style={styles.panelList}
               data={models.filter((model) => model.id !== defaultModelId)}
@@ -1635,7 +1729,7 @@ export function AssistantScreen() {
                     {/* 第一项是「此刻正在用的那个模型」。下面列表已把 defaultModelId 那一行
                         剔掉，所以这个名字在这个面板里只有这里能显示 —— 少了这一行，就只剩
                         「跟随」两个字，看不出落到哪个模型上。 */}
-                    <Text style={styles.sheetRowTitle}>跟随主智能体或默认模型</Text>
+                    <Text style={styles.sheetRowTitle}>跟随默认模型</Text>
                     <Text style={styles.sheetRowMeta} numberOfLines={1}>
                       {models.find((model) => model.id === defaultModelId)?.name ?? "尚未选择默认模型"}
                     </Text>
@@ -1656,7 +1750,9 @@ export function AssistantScreen() {
                 );
               }}
             />
-        </BottomSheet>
+          </>
+        )}
+      </BottomSheet>
       <BottomSheet
         visible={stylePickerVisible}
         title="选择创作文风"
@@ -1705,6 +1801,13 @@ export function AssistantScreen() {
           // （切作品还要跑一次 load() 的整页重载），两者叠在一起会掉一帧。
           // 选对话那条本来就先收抽屉，这里与之对齐。
           setDrawerVisible(false);
+          // 🔴 临时埋点（量完即删）：点作品到抽屉收起动画结束、load() 开始的间隔。
+          // 若这个数接近 190（抽屉收起动画时长），说明是动画与重活叠在一起；
+          // 若是几十，动画不背这个锅，得往 load() 里查。
+          const __tClick = Date.now();
+          setTimeout(() => {
+            appendBreadcrumb(`__perf 抽屉点击后 ${Date.now() - __tClick}ms`);
+          }, 260);
           setCurrentProject(target.id);
         }}
         onSelectSession={(target, session) => {

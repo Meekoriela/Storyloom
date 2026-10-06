@@ -42,6 +42,14 @@ const lightColors = {
   dangerFallback: "#A32D2D",
   overlay: "rgba(20, 21, 19, 0.48)",
   overlaySoft: "rgba(20, 21, 19, 0.25)",
+  /**
+   * 书架层板的压暗罩。**只在深色档生效**，浅色档透明。
+   *
+   * 为什么不复用 `overlaySoft`：那个 token 的语义是「半透明黑压暗」，两档都有值。
+   * 层板要的却只是深色档压暗 —— 浅木色的层板贴图（中部亮度 246）在浅色档本来就是对的颜色，
+   * 盖一层 0.25 的近黑会把它变成深棕。深色档下那张贴图又会发白，所以要压。
+   */
+  plankShade: "transparent",
   /** 米色：书架书脊的底。 */
   cream: "#EDE6D8",
   /** 青灰：文风库书籍图标底。 */
@@ -75,6 +83,8 @@ const darkColors = {
   dangerFallback: "#F07870",
   overlay: "rgba(0, 0, 0, 0.6)",
   overlaySoft: "rgba(0, 0, 0, 0.35)",
+  /** 浅木色层板在深色档下会发白，压一层黑；浅色档见同键的注释。 */
+  plankShade: "rgba(0, 0, 0, 0.35)",
   cream: "#2E2A20",
   teal: "#1F2E29",
   mint: "#1B2A26",

@@ -1,11 +1,15 @@
 # Storyloom ✒️
 
+<div align="center"><img src="mobile-rn/assets/icon.png" width="96" alt="Storyloom icon" /></div>
+
 > (๑•̀ㅂ•́)و✧ A novel-writing agent that lives in your pocket — draft three chapters on your commute.
 
 [English](README_EN.md) | [中文](README.md)
 
 An AI writing assistant that runs **entirely on your phone**: outlines, prose, revisions and continuity notes — all on-device.
 No computer, no command line. Install and write.
+
+[Why Storyloom](#why-storyloom) · [What is this](#what-is-this) · [Features](#features) · [Differences from upstream](#differences-from-upstream-openficm) · [Install](#install) · [iOS](#ios) · [Repository layout](#repository-layout) · [Building](#building) · [FAQ](#faq) · [License](#license--attribution)
 
 ## Why Storyloom?
 
@@ -14,6 +18,17 @@ No computer, no command line. Install and write.
 - 🔌 **Bring your own model** — OpenAI / Gemini / Anthropic protocols; official Zhipu and DeepSeek endpoints work, and so do relays and self-hosted gateways
 - 🆓 **Zero cost to start** — connect any provider with a free tier (Zhipu / SiliconFlow / OpenRouter); the app is free, no subscription
 - 🧠 **It remembers your book** — local semantic retrieval runs on the phone CPU, so chapter 300 can still find the clue you planted in chapter 3 (・ω<)☆
+
+Where your data and manuscripts live, in one picture:
+
+```mermaid
+flowchart TD
+    UI["UI · bookshelf / writing / assistant"] --> DB["On-device database · works & materials"]
+    DB --> RT["Agent runtime · tools / skills / agents"]
+    RT --> NET["Model API · three protocols · your own key"]
+```
+
+Only the last step touches the network — manuscripts, materials and semantic retrieval all stay on the device.
 
 ---
 
@@ -30,7 +45,7 @@ Storyloom **stands on OpenFicM's shoulders rather than rewriting it**: the UI, l
 ## Features
 
 **Writing**
-- Local bookshelf and project management with volume / chapter structure and preview-first editing (accident-proof); the header "⋯ menu" holds **local import / shelf style (grid / list / spine) / category management / show categories on shelf / shelf sorting**
+- Local bookshelf and project management with volume / chapter structure and preview-first editing (accident-proof); **creating a work asks for a writing form** (long-form / short-form / screenplay), which decides which genre agent takes that work, shown as a tag beside the title; the header "⋯ menu" holds **local import / shelf style (grid / list / spine) / category management / show categories on shelf / shelf sorting**
 - **Grid view looks like a real bookshelf**: books stand on a single plank with their bottoms resting just above the plank's top edge, so the plank's thickness shows fully below the books (the plank is drawn behind them); titles and volume / chapter / word counts sit **below the plank**; cells are computed from the screen width so four books sit centred with 20 dp on each side; covers get small rounded corners and a light spine, books without a cover get a generated typographic cover (color derived from the title — not a flat color block)
 - **Spine view**: one plank per row with a row of spines standing on it. Thickness and height are mapped from the work's word count on a log scale (100k words is visibly thicker than 10k), and a hash of the title decides each spine's width and gives about one in five a slight lean while the rest stand straight, so a row looks like a real shelf; **each row packs by actual spine width** (8–10 books), and the title under a spine follows that spine's width; the rounded look is made with four tone bands running dark-bright-bright-dark
 - Autosave with background saving and keyboard avoidance
@@ -52,8 +67,10 @@ Storyloom **stands on OpenFicM's shoulders rather than rewriting it**: the UI, l
 - **Reasoning and prose stream in live**: all three protocols stream, so reasoning and text appear as they are generated instead of arriving in one block. One round becomes a **tree**: node dots sit in a single column on the left (spinning while running, filled or hollow when done, a cross on failure) and **three indent levels** carry the hierarchy — the group header sits furthest left, reasoning segments and "completed · N items" groups shift in one step, and each individual call shifts in one more; all of it is carried by indentation alone, with no vertical rule; the header is a single row — "state + elapsed · total characters". The second level uses two different icons to tell them apart — a light bulb for reasoning, a terminal for the tool groups. It **auto-collapses when the round finishes** (stays open on failure, and stays open while you are reading history so your position is not yanked away). Reasoning and prose share **one scroll** with no separate scroll box. An expanded tool row's "notes / parameters / result" blocks carry no background panel, separated by their three small labels and aligned with the text above them, with a monospaced face marking them as data rather than prose. Model reasoning (DeepSeek-R1 family, Zhipu reasoning, Gemini, Claude extended thinking) appears the same way
 - **Context usage**: open it from the button at the top right to see the estimated share, message and character counts, and over-budget / over-window warnings
 - Live tool execution, with sub-agent delegation
+- **Agents are chosen per work**: which agent a work uses is switched from the sheet opened by the model button, and affects only that work; works that never chose one follow the default in settings
+- **A plan can be executed directly**: plans produced by the planning-only agent carry a "start working from this plan" button that hands the plan to the executing agent
 - A shared budget of 24 model requests per conversation (protects rate-limited relays)
-- **Built-in creation presets**: 3 agents (long-form / short-form / screenplay) + **35 built-in writing skills** (de-AI flavor in two layers — wording and narrative architecture — information gap & conflict ladder, dialogue polish, dialogue diagnosis, outline building, chapter beat-sheet writing, scene sequencing & ratio, load-bearing turning points, reverse outliner, abstraction-layer alignment, serial pacing quota & anti-resolution, screenplay scenes, audio drama scripts, long-form continuity audits, scene & atmosphere description, golden-finger design, fanfiction, poetry & lyrics, and more) — spanning long-form, short-form, screenplay and interactive fiction. Custom content can be exported/imported as JSON
+- **Built-in creation presets**: 3 agents (long-form / short-form / screenplay) + **35 built-in writing skills** (de-AI flavor in two layers — wording and narrative architecture — information gap & conflict ladder, dialogue polish, dialogue diagnosis, outline building, chapter beat-sheet writing, scene sequencing & ratio, load-bearing turning points, reverse outliner, abstraction-layer alignment, serial pacing quota & anti-resolution, screenplay scenes, audio drama scripts, long-form continuity audits, scene & atmosphere description, golden-finger design, fanfiction, poetry & lyrics, and more) — spanning long-form, short-form, screenplay and interactive fiction. The three genre agents each work to their own form (specification → before writing → while writing → after writing → prohibitions), joined by two collaborating sub-agents — **continuity check** (cross-chapter consistency for names, forms of address, timeline and established facts; reports only, never rewrites) and **recap** (maintains the recap). Custom content can be exported/imported as JSON
 
 **Model integration** (the focus of this project)
 - Three protocols: OpenAI-compatible / Google Gemini / Anthropic

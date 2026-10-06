@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { SideDrawer } from "@/components/side-drawer";
+import { projectFormLabel } from "@/settings/storyloom-presets";
 import { colors, spacing, themedStyles } from "@/theme";
 import type { Chapter, Project, Volume } from "@/types";
 
@@ -160,6 +161,7 @@ export function ChapterDrawer({
       const volumes = volumesByProject[project.id] ?? [];
       const chapters = chaptersByProject[project.id] ?? [];
       const projectMenu = "p:" + project.id;
+      const formLabel = projectFormLabel(project.form);
 
       return (
         <View key={project.id}>
@@ -173,6 +175,7 @@ export function ChapterDrawer({
               <Text numberOfLines={1} style={[styles.projectTitle, isCurrent && styles.projectTitleActive]}>
                 {project.title}
               </Text>
+              {formLabel ? <Text style={styles.formTag}>{formLabel}</Text> : null}
               <Text style={styles.count}>{volumes.length} 卷</Text>
             </Pressable>
             <RowButton icon="add" label={"在《" + project.title + "》中新建卷"} onPress={() => { setMenuKey(null); onCreateVolume(project); }} />
@@ -300,9 +303,15 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   projectRowActive: { backgroundColor: colors.primarySoft },
   rowMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 44 },
   rowPressed: { backgroundColor: colors.surfaceMuted },
-  projectTitle: { flex: 1, minWidth: 0, color: colors.text, fontSize: 15, fontWeight: "600" },
+  /**
+   * 标题不撑满、卷数撑开并右对齐 —— 与助手页侧边栏同一套写法。
+   * 标题若撑满整行，形式标签会被挤到最右端，就不在作品名右边了。
+   */
+  projectTitle: { flexShrink: 1, minWidth: 0, color: colors.text, fontSize: 15, fontWeight: "600" },
   projectTitleActive: { color: colors.primary },
-  count: { color: colors.textMuted, fontSize: 11 },
+  count: { flex: 1, color: colors.textMuted, fontSize: 11, textAlign: "right" },
+  // 写作形式标签：与助手页侧边栏的「临时」同一套尺寸。
+  formTag: { color: colors.textMuted, fontSize: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: 5, paddingHorizontal: 4, paddingVertical: 1 },
   volumeRow: {
     flexDirection: "row",
     alignItems: "center",

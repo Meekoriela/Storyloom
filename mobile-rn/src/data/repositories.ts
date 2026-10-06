@@ -10,6 +10,7 @@ import type {
   ChatSession,
   Model,
   Project,
+  ProjectForm,
   Provider,
   ProviderType,
   Volume,
@@ -69,6 +70,7 @@ type ProjectRow = {
   description: string;
   cover_path?: string | null;
   category_id?: string | null;
+  form?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -142,10 +144,16 @@ type WorldInfoEntryRow = {
   updated_at: string;
 };
 
+/** 形式列是自由文本，读出来时收窄成三个合法值之一；其余（含老库的 NULL）一律按「未设」处理。 */
+function normalizeProjectForm(value: string | null | undefined): ProjectForm | null {
+  return value === "long-form" || value === "short-form" || value === "screenplay" ? value : null;
+}
+
 const mapProject = (row: ProjectRow): Project => ({
   id: row.id, title: row.title, description: row.description,
   coverPath: row.cover_path ?? null,
   categoryId: row.category_id ?? null,
+  form: normalizeProjectForm(row.form),
   createdAt: row.created_at, updatedAt: row.updated_at,
 });
 const mapCategory = (row: CategoryRow): Category => ({
@@ -278,7 +286,13 @@ export async function getProject(id: string): Promise<Project | null> {
   return row ? mapProject(row) : null;
 }
 
-export async function createProject(title: string, description = ""): Promise<Project> {
+/**
+ * 新建作品。
+ *
+ * `form` 可选：书架页的新建面板会传（新建时必须选），助手在未选作品时自建的「未命名」
+ * 不传 —— 那部作品本来就没有形式，落回全局默认智能体。
+ */
+export async function createProject(title: string, description = "", form: ProjectForm | null = null): Promise<Project> {
   const db = await getDatabase();
   const id = createId();
   const now = new Date().toISOString();
@@ -288,8 +302,8 @@ export async function createProject(title: string, description = ""): Promise<Pr
   const chapterId = createId();
   await db.withExclusiveTransactionAsync(async (txn) => {
     await txn.runAsync(
-      "INSERT INTO projects(id, title, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-      id, normalizedTitle, normalizedDescription, now, now,
+      "INSERT INTO projects(id, title, description, form, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      id, normalizedTitle, normalizedDescription, form, now, now,
     );
     await txn.runAsync(
       "INSERT INTO volumes(id, project_id, title, order_index) VALUES (?, ?, ?, 1)",
@@ -304,7 +318,7 @@ export async function createProject(title: string, description = ""): Promise<Pr
       chapterId, id, "第一章",
     );
   });
-  return { id, title: normalizedTitle, description: normalizedDescription, coverPath: null, categoryId: null, createdAt: now, updatedAt: now };
+  return { id, title: normalizedTitle, description: normalizedDescription, coverPath: null, categoryId: null, form, createdAt: now, updatedAt: now };
 }
 
 /** 更新作品名称与简介；名称不允许为空。 */

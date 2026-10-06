@@ -407,7 +407,7 @@ function requiredSkillForRequest(
   agent: AgentDefinition,
   request: string,
 ): AgentSkill | null {
-  const skills = enabledSkillsForAgent(catalog, agent);
+  const skills = enabledSkillsForAgent(catalog);
   const lornSkillId = /(更新我的文风|保存并进化文风)/.test(request)
     ? "plugin-lorn-style--evolution"
     : /(蒸馏文风|分析小说文风|提取文笔\s*DNA)/i.test(request)
@@ -460,9 +460,13 @@ function normalizeQuestions(args: Record<string, unknown>): AgentClarificationQu
   });
 }
 
-function enabledSkillsForAgent(catalog: RuntimeCatalog, agent: AgentDefinition): AgentSkill[] {
-  const allowedIds = new Set(agent.skillIds);
-  return catalog.skills.filter((skill) => skill.enabled && (!allowedIds.size || allowedIds.has(skill.id)));
+/** 智能体自带的技能名单是「常用项」，不是准入名单：未列出的技能同样可以调用。 */
+function preferredSkillIds(agent: AgentDefinition): Set<string> {
+  return new Set(agent.skillIds);
+}
+
+function enabledSkillsForAgent(catalog: RuntimeCatalog): AgentSkill[] {
+  return catalog.skills.filter((skill) => skill.enabled);
 }
 
 function enabledDelegates(catalog: RuntimeCatalog, agent: AgentDefinition): AgentDefinition[] {
@@ -487,6 +491,13 @@ function toolsForAgent(agent: AgentDefinition): AgentToolDefinition[] {
   allowed.add("select_style_profile");
   allowed.add("save_reference_style_profile");
   if (agent.kind !== "primary") allowed.delete("delegate_agent");
+  // 主智能体要能记账与建卷：通用提示词已要求把伏笔规划用 write_note 保存、需要新卷时建卷，
+  // 而内置目录的工具表未收录这几项（该文件与上游校验对齐，不能改）。
+  if (agent.kind === "primary") {
+    allowed.add("write_note");
+    allowed.add("edit_note");
+    allowed.add("create_volume");
+  }
   return agentTools.filter((tool) => allowed.has(tool.name));
 }
 
@@ -533,9 +544,10 @@ function systemPrompt(input: {
   }
   sections.push("大纲、剧情走向、伏笔规划这类尚未在正文中发生的内容属于笔记，用 write_note 保存，不要写进世界书；世界书只放已经成立的设定，混入未发生的计划会让后续创作把它当成既定事实。");
 
-  const skills = enabledSkillsForAgent(input.catalog, input.agent);
+  const skills = enabledSkillsForAgent(input.catalog);
   if (skills.length) {
-    sections.push(`可按需激活的技能：\n${skills.map((skill) => `- ${skill.name}（${skill.id}）：${skill.description}`).join("\n")}`);
+    const preferred = preferredSkillIds(input.agent);
+    sections.push(`可按需激活的技能（标注「常用」的是该智能体的优先项，未标注的同样可以调用）：\n${skills.map((skill) => `- ${skill.name}（${skill.id}）${preferred.has(skill.id) ? "［常用］" : ""}：${skill.description}`).join("\n")}`);
   }
   const delegates = enabledDelegates(input.catalog, input.agent);
   if (delegates.length) {
@@ -642,18 +654,6 @@ async function authorizeToolCall(
     if (!approved) throw new Error("用户未批准本次工具调用");
   }
   return preview;
-}
-
-async function selectionForAgent(agent: AgentDefinition, fallback: ModelSelection): Promise<ModelSelection> {
-  if (!agent.modelId || agent.modelId === fallback.model.id) return fallback;
-  const [models, providers] = await Promise.all([listModels(), listProviders()]);
-  const model = models.find((item) => item.id === agent.modelId);
-  if (!model) return fallback;
-  const provider = providers.find((item) => item.id === model.providerId);
-  if (!provider) return fallback;
-  const apiKey = await getProviderApiKey(provider);
-  if (!apiKey) return fallback;
-  return { model, provider, apiKey };
 }
 
 async function runAgentLoop(input: LoopInput): Promise<LoopResult> {
@@ -794,7 +794,7 @@ async function runAgentLoop(input: LoopInput): Promise<LoopResult> {
           eventDetail = response.cancelled ? "用户跳过了本次问题" : `已回答 ${response.answers.length} 个问题`;
         } else if (call.name === "activate_skill") {
           const requested = requiredArgument(call.arguments, "skill_name");
-          const skill = enabledSkillsForAgent(input.catalog, input.agent)
+          const skill = enabledSkillsForAgent(input.catalog)
             .find((item) => item.id === requested || item.name === requested);
           if (!skill) throw new Error(`技能不在 ${input.agent.name} 的可用列表中: ${requested}`);
           result = { skill_id: skill.id, skill_name: skill.name, instructions: skill.instructions };
@@ -810,10 +810,8 @@ async function runAgentLoop(input: LoopInput): Promise<LoopResult> {
           const task = requiredArgument(call.arguments, "task");
           eventTitle = `${childAgent.name} 正在协作`;
           input.recorder.update(eventId, { title: eventTitle, detail: "正在读取作品并处理任务" });
-          const childSelection = await selectionForAgent(childAgent, input.selection);
           const childResult = await runAgentLoop({
             ...input,
-            selection: childSelection,
             history: [{ role: "user", content: task }],
             agent: childAgent,
             consistencyReason: null,
