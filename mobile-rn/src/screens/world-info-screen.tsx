@@ -282,7 +282,7 @@ export function WorldInfoScreen() {
             contentContainerStyle={entries.length ? styles.list : styles.emptyList}
             ListHeaderComponent={
               <View style={styles.bookForm}>
-                <Field label="世界书名称" value={bookName} onChangeText={setBookName} />
+                <Field label="世界书名称" value={bookName} onChangeText={setBookName} adaptive />
                 <Field label="说明" value={bookDescription} onChangeText={setBookDescription} multiline textAlignVertical="top" style={styles.bookDescription} />
                 <Button label="保存世界书信息" onPress={() => void saveBook()} disabled={!bookName.trim()} loading={saving} />
                 <Text style={styles.sectionTitle}>条目 · {entries.length}</Text>

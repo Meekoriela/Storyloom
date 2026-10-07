@@ -90,7 +90,9 @@ import {
   checkAppUpdate,
   getLastAppUpdateCheck,
   getAutoCheckUpdate,
-  setAutoCheckUpdate,
+  // 写库函数必须换名导入：本组件里有一颗同名的 state setter（useState 的第二个返回值），
+  // 直接用原名会被 state setter 遮蔽，写库调用实际改的是内存值，落不了盘。
+  setAutoCheckUpdate as persistAutoCheckUpdate,
   CURRENT_APP_VERSION,
   type AppUpdateInfo,
 } from "@/settings/app-update";
@@ -1536,7 +1538,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
           <View style={styles.permissionCard}>
             <View style={styles.manageText}>
               <Text style={styles.settingLabel}>正文修改权限</Text>
-              <Text style={styles.settingValue}>写入正文前的确认方式。删除类操作在任何一档下都会等你确认。</Text>
+              <Text style={styles.sectionHint}>写入正文前的确认方式。删除类操作在任何一档下都会等你确认。</Text>
             </View>
             <View style={styles.modeChoices}>
               {APPROVAL_MODES.map((mode) => (
@@ -1642,7 +1644,7 @@ export function SettingsCategoryScreen({ category, onBack }: { category: Exclude
             value={autoCheckUpdate}
             onChange={(value) => {
               setAutoCheckUpdate(value);
-              void setAutoCheckUpdate(value);
+              void persistAutoCheckUpdate(value);
             }}
           />
           <SettingRow label="当前版本" value={CURRENT_APP_VERSION} />
@@ -1768,7 +1770,7 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   mascotPreview: { width: 56, height: 56, tintColor: colors.primary },
   mascotLabel: { color: colors.text, fontSize: 12 },
   groupHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 7, paddingHorizontal: spacing.sm, marginTop: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  searchInput: { minHeight: 42, marginBottom: spacing.sm, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, color: colors.text, fontSize: 14 },
+  searchInput: { minHeight: 42, marginBottom: spacing.sm, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background, color: colors.text, fontSize: 14 },
   // 面板本体是全宽贴屏幕两边的，内容要自己留左右边距，否则正文与按钮都顶到屏幕缘。
   // 正文与按钮之间也靠这里的 gap 分开：正文是限高滚动区，紧贴按钮会显得黏在一起。
   // flexShrink：面板有 maxHeight，中间这层必须能被压缩，里面的滚动区才拿得到高度约束。

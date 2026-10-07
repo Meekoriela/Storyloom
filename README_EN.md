@@ -70,7 +70,7 @@ Storyloom **stands on OpenFicM's shoulders rather than rewriting it**: the UI, l
 - **Agents are chosen per work**: which agent a work uses is switched from the sheet opened by the model button, and affects only that work; works that never chose one follow the default in settings
 - **A plan can be executed directly**: plans produced by the planning-only agent carry a "start working from this plan" button that hands the plan to the executing agent
 - A shared budget of 24 model requests per conversation (protects rate-limited relays)
-- **Built-in creation presets**: 3 agents (long-form / short-form / screenplay) + **35 built-in writing skills** (de-AI flavor in two layers — wording and narrative architecture — information gap & conflict ladder, dialogue polish, dialogue diagnosis, outline building, chapter beat-sheet writing, scene sequencing & ratio, load-bearing turning points, reverse outliner, abstraction-layer alignment, serial pacing quota & anti-resolution, screenplay scenes, audio drama scripts, long-form continuity audits, scene & atmosphere description, golden-finger design, fanfiction, poetry & lyrics, and more) — spanning long-form, short-form, screenplay and interactive fiction. The three genre agents each work to their own form (specification → before writing → while writing → after writing → prohibitions), joined by two collaborating sub-agents — **continuity check** (cross-chapter consistency for names, forms of address, timeline and established facts; reports only, never rewrites) and **recap** (maintains the recap). Custom content can be exported/imported as JSON
+- **Built-in creation presets**: 3 agents (long-form / short-form / screenplay) + **42 built-in writing skills** (de-AI flavor in two layers — wording and narrative architecture — information gap & conflict ladder, dialogue polish, dialogue diagnosis, outline building, chapter beat-sheet writing, scene sequencing & ratio, load-bearing turning points, reverse outliner, abstraction-layer alignment, serial pacing quota & anti-resolution, screenplay scenes, audio drama scripts, long-form continuity audits, scene & atmosphere description, golden-finger design, fanfiction, poetry & lyrics, and more) — spanning long-form, short-form, screenplay and interactive fiction. The three genre agents each work to their own form (specification → before writing → while writing → after writing → prohibitions), joined by two collaborating sub-agents — **continuity check** (cross-chapter consistency for names, forms of address, timeline and established facts; reports only, never rewrites) and **recap** (maintains the recap). Custom content can be exported/imported as JSON
 
 **Model integration** (the focus of this project)
 - Three protocols: OpenAI-compatible / Google Gemini / Anthropic
@@ -103,7 +103,7 @@ Upstream requires all 5 runtime resources before the app opens, including a **21
 
 Changes:
 
-- The base agent / skill content pack (478 KB, 16 skills + 8 agents) is **bundled into the APK**, SHA-256 matching the pinned upstream commit; Storyloom additionally bundles 35 self-written skills without modifying the pack (keeps the checksum intact)
+- The base agent / skill content pack (478 KB, 16 skills + 8 agents) is **bundled into the APK**, SHA-256 matching the pinned upstream commit; Storyloom additionally bundles 42 self-written skills without modifying the pack (keeps the checksum intact)
 - Resources split into **required / optional**: only the built-in pack is required; Lorn style, oh-story pack, embedding and reranking models are all optional
 - The launch page gains "skip and enter the app" — it can never lock you out
 - Local models warm up **silently in the background**; a failed warm-up does not block entry
@@ -169,7 +169,7 @@ Changed: a **fixed signing certificate** (configured in repo Secrets), so every 
 ### 10. Settings grouping & built-in creation presets
 
 - 15 entries in five groups (Basics / Connection & Models / Creation System / Knowledge / System); list shows names only, explanations at sub-page tops
-- Built-in long-form / short-form / screenplay agents plus **35 self-written skills** (self-written, not translated or copied from external sources), merged with the remote content pack by id — upstream content is never overwritten; **both read paths merge** these extensions
+- Built-in long-form / short-form / screenplay agents plus **42 self-written skills** (self-written, not translated or copied from external sources), merged with the remote content pack by id — upstream content is never overwritten; **both read paths merge** these extensions
 - **Models page**: default-model card + provider rows (fetch models / advanced / delete) + radio to switch default + long-press for per-model conversation settings + "clean duplicates" in the corner
 - **Model capabilities page**: temperature / max tokens / tool calls / image input per model
 - **Request timeout page**: shows the current value with "save / restore default" buttons (valid range 10000–300000 ms; out-of-range values are reported and not saved); provider advanced settings live behind each row's button on the Models page

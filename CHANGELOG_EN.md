@@ -8,6 +8,26 @@ Important changes to this project. Format based on [Keep a Changelog](https://ke
 
 ---
 
+## [0.1.46] — 2026-10-07
+
+### Added
+
+- **The two collaborating sub-agents now have skills (library 35 → 42)**: **continuity check** gets four — identity and form-of-address consistency, timeline check, world-rule check, conflict list and report; **recap** gets three — chapter state extraction, thread and open-question ledger, recap writing. Both sub-agents were created in v0.1.45 with tools only and an empty skill list, shown as 0 in the UI. A sub-agent works by reading a batch, checking it and reporting to a fixed format, and the checklist and report format belong in a skill; putting them in the system prompt would mean repeating them for every sub-agent and splitting them off from kindred criteria already in the library (long-form continuity audit, abstraction-layer alignment)
+- **The write-confirmation card titles itself with the action**: the header used to read "confirm write" while the actual action sat in small text on the second line, so a run of cards gave no way to tell creating a work from creating a chapter. The title is now the action itself (new work / new chapter / write chapter content …); "new work" gains an extra line — it is the only action that adds a work to the bookshelf, everything else stays inside the current work
+- **Name fields size to their content**: the text field gained an optional adaptive width, wired into the character name and world-book name — sized to content rather than the full row. An editable input does not shrink to content, so an invisible text node measures the current value (placeholder when empty, falling back to the label) to size the box, and longer values scroll inside it. Other fields are unchanged
+
+### Fixed
+
+- **The auto-update switch could not be turned back on**: a `useState` setter in the component shared its name with the persistence function imported from a module, shadowing it — flipping the switch called the in-memory setter and the write never happened. Once the dialog had written "off", the settings page could not change the stored value, and reopening the page read it back as off. The import is renamed; behaviour is unchanged
+- **Thinking produced before a rate limit or error was invisible**: a failed run trace started collapsed (the initial-expand condition only recognised "running"), and a rate limit often cuts in mid-thinking, so the produced trace was hidden. Failed traces now start expanded; a trace that failed at the very start is empty anyway, so expanding costs nothing
+- **Position of "delete this model"**: moved left of "restore defaults" to be the first button in the row. It sizes to its label and deletion still goes through a confirmation card
+- **The free-answer input on the question card and the search fields for tool permissions and skills were solid white**: those three were the only solid-white blocks in the app (the page background is a light grey) and did not match comparable blocks. They now use the page background and keep their outlines
+- **The second line of the "prose editing permission" description was right-aligned**: that line reused the trailing-value style, which carries right alignment, so the wrapped second line hugged the right edge. It now uses the left-aligned long-text style
+- **The bookshelf header carried a duplicate grouping entry**: it repeated the filter row inside the bookshelf — the header's expander opened "all / each category / uncategorised", the same set as the chip row below, so the same list appeared twice. The header block and its panel are gone; filtering stays on the row under the quick actions, and the header title returns to the app name
+- **The category manager / assign-category sheet had a gap at the top**: the description under the title and the first item below it were separated by two layers of padding (the sheet header's bottom padding and the content area's top padding), with the first item adding a top margin of its own — three layers, 20dp. The content area's top padding is zero and the first item drops its own margin, leaving the header's single layer (8dp). The two branches are one sheet, so a single change covers both
+
+---
+
 ## [0.1.45] — 2026-10-06
 
 ### Added

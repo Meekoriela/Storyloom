@@ -903,17 +903,8 @@ export function SettingsScreen() {
               <Text style={styles.fieldHint}>压缩系统提示词为全局设置；切到「全局默认」可修改。</Text>
             )}
             <View style={styles.btnrow}>
-              {convScope === "model" ? (
-                <Button label="恢复默认" variant="secondary" onPress={() => {
-                  if (!convSheetModel) return;
-                  void setSetting(`context.override.${convSheetModel.id}`, "").then(() => {
-                    showNotice("已恢复跟随全局默认");
-                    setConvSheetModel(null);
-                  });
-                }} />
-              ) : null}
-              {/* 删除与恢复默认、保存同排。删除是破坏性动作，但这一排里三个都是"改完就走"的
-                  同级动作，另起一行会让它像面板底部的独立结论，反而更显眼。
+              {/* 删除与恢复默认、保存同排，删除排最左 —— 破坏性动作摆在整排的起始位置，
+                  与被删对象（当前模型）挨着出现，不用扫到行尾才看见。
                   真正的拦截在确认卡上：点它先收掉本面板再弹卡（两个都是 Modal，直接在面板里弹会叠两层），
                   与供应商删除、抽屉重命名那几处同一处理。 */}
               {convScope === "model" ? (
@@ -933,6 +924,15 @@ export function SettingsScreen() {
                     });
                   }}
                 />
+              ) : null}
+              {convScope === "model" ? (
+                <Button label="恢复默认" variant="secondary" onPress={() => {
+                  if (!convSheetModel) return;
+                  void setSetting(`context.override.${convSheetModel.id}`, "").then(() => {
+                    showNotice("已恢复跟随全局默认");
+                    setConvSheetModel(null);
+                  });
+                }} />
               ) : null}
               <Button label="保存" onPress={() => {
                 const parsedHistory = Number(convHistory);

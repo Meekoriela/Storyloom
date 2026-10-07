@@ -321,7 +321,7 @@ export function CharactersScreen() {
               extraKeyboardSpace={spacing.md}
               contentContainerStyle={styles.form}
             >
-              <Field label="角色名称" value={name} onChangeText={setName} autoFocus={!editing} />
+              <Field label="角色名称" value={name} onChangeText={setName} autoFocus={!editing} adaptive />
               {/* 错误提示必须放在弹窗内：页面级的那条在弹窗底下，选图失败时看不见。 */}
               {error ? <Text style={styles.editorError}>{error}</Text> : null}
               <View style={styles.imageRow}>

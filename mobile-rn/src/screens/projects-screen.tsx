@@ -94,7 +94,6 @@ export function ProjectsScreen() {
   const [shelfSort, setShelfSort] = useState<"recent" | "created" | "words">("recent");
   /** 当前显示的分组；null = 全部。存设置时用 "all" 表示全部 */
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
-  const [categoryPanelVisible, setCategoryPanelVisible] = useState(false);
   const [shelfMenuView, setShelfMenuView] = useState<"main" | "sort">("main");
   const [categoryManagerVisible, setCategoryManagerVisible] = useState(false);
   const [assignTarget, setAssignTarget] = useState<Project | null>(null);
@@ -163,7 +162,6 @@ export function ProjectsScreen() {
   /** 选择书架当前显示的分组（持久化；分类被删时回落「全部」）。 */
   const selectShelfCategory = (categoryId: string | null) => {
     setSelectedCategoryId(categoryId);
-    setCategoryPanelVisible(false);
     void setSetting("general.shelfCategory", categoryId ?? "all");
   };
   const closeCategoryManager = () => { setCategoryManagerVisible(false); setRenamingCategory(null); };
@@ -213,9 +211,6 @@ export function ProjectsScreen() {
   }, [projects, shelfSort, stats]);
 
   /** 渲染条目：只显示当前选中的分组；「全部」平铺。 */
-  const currentCategoryName = selectedCategoryId
-    ? categories.find((category) => category.id === selectedCategoryId)?.name ?? "全部"
-    : "全部";
   const hasUncategorized = projects.some((project) => !project.categoryId || !categories.some((category) => category.id === project.categoryId));
   const shelfItems = useMemo(() => {
     const visible = !selectedCategoryId
@@ -573,16 +568,7 @@ function coverColor(title: string): string {
   return (
     <Screen>
       <Header
-        title={
-          categories.length ? (
-            <ScalePress accessibilityLabel="选择分组" onPress={() => setCategoryPanelVisible((value) => !value)} style={styles.shelfTitleButton}>
-              <Text style={styles.shelfTitleText}>{currentCategoryName}</Text>
-              <Ionicons name={categoryPanelVisible ? "chevron-up" : "chevron-down"} size={16} color={colors.text} />
-            </ScalePress>
-          ) : (
-            "全部"
-          )
-        }
+        title="Storyloom"
         action={
           <View style={styles.headerActions}>
             <ScalePress accessibilityLabel="新建作品" onPress={() => setShowCreate(true)} style={styles.iconButton}>
@@ -594,26 +580,6 @@ function coverColor(title: string): string {
           </View>
         }
       />
-      {categoryPanelVisible ? (
-        <>
-          <Pressable accessibilityLabel="关闭分组面板" onPress={() => setCategoryPanelVisible(false)} style={styles.shelfMenuBackdrop} />
-          <View style={styles.categoryPanel}>
-            <ScalePress onPress={() => selectShelfCategory(null)} style={[styles.shelfChip, !selectedCategoryId && styles.shelfChipActive]}>
-              <Text style={[styles.shelfChipText, !selectedCategoryId && styles.shelfChipTextActive]}>全部</Text>
-            </ScalePress>
-            {categories.map((category) => (
-              <ScalePress key={category.id} onPress={() => selectShelfCategory(category.id)} style={[styles.shelfChip, selectedCategoryId === category.id && styles.shelfChipActive]}>
-                <Text style={[styles.shelfChipText, selectedCategoryId === category.id && styles.shelfChipTextActive]}>{category.name}</Text>
-              </ScalePress>
-            ))}
-            {hasUncategorized ? (
-              <ScalePress onPress={() => selectShelfCategory("uncategorized")} style={[styles.shelfChip, selectedCategoryId === "uncategorized" && styles.shelfChipActive]}>
-                <Text style={[styles.shelfChipText, selectedCategoryId === "uncategorized" && styles.shelfChipTextActive]}>未分类</Text>
-              </ScalePress>
-            ) : null}
-          </View>
-        </>
-      ) : null}
       {shelfMenuVisible && shelfMenuView === "main" ? (
         <>
           <Pressable accessibilityLabel="关闭书架菜单" onPress={() => setShelfMenuVisible(false)} style={styles.shelfMenuBackdrop} />
@@ -1021,7 +987,8 @@ function coverColor(title: string): string {
           <PlainScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetScrollContent} keyboardShouldPersistTaps="handled">
             {assignTarget ? (
               <>
-                <Text style={styles.sheetSectionTitle}>归入</Text>
+                {/* 首项不吃小节标题自带的上间距：上面就是面板表头，再留一道会空出一段。 */}
+                <Text style={[styles.sheetSectionTitle, { marginTop: 0 }]}>归入</Text>
                 <Text style={styles.categorySectionHint}>将《{assignTarget.title}》归入：</Text>
                 <Pressable
                   accessibilityLabel="归入未分类"
@@ -1046,7 +1013,8 @@ function coverColor(title: string): string {
               </>
             ) : (
               <>
-                <Text style={styles.sheetSectionTitle}>新建分类</Text>
+                {/* 首项不吃小节标题自带的上间距：上面就是面板表头，再留一道会空出一段。 */}
+                <Text style={[styles.sheetSectionTitle, { marginTop: 0 }]}>新建分类</Text>
                 <Field label="分类名" value={newCategoryName} onChangeText={setNewCategoryName} />
                 <Button label="创建分类" onPress={() => void addCategory()} disabled={!newCategoryName.trim()} />
                 <Text style={styles.sheetSectionTitle}>已有分类</Text>
@@ -1213,15 +1181,13 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   shelfMenuCard: { position: "absolute", top: 100, right: 18, width: 176, backgroundColor: colors.background, borderRadius: 12, borderWidth: 1, borderColor: colors.border, paddingVertical: 4, zIndex: 10, elevation: 8, shadowColor: "#000", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 10 },
   menuBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.overlay },
   sheetScroll: { flexShrink: 1 },
-  sheetScrollContent: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg, gap: spacing.sm },
+  // 上留白留 0：面板表头本身已带下留白，再叠一层会让标题下的说明与首项之间空出一段。
+  sheetScrollContent: { paddingHorizontal: spacing.lg, paddingTop: 0, paddingBottom: spacing.lg, gap: spacing.sm },
   sheetSectionTitle: { marginTop: spacing.xs, color: colors.textMuted, fontSize: 12, fontWeight: "700" },
   menuTitle: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.xs, color: colors.textMuted, fontSize: 13 },
   menuRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 52, paddingHorizontal: spacing.lg },
   menuRowPressed: { backgroundColor: colors.surfaceMuted },
   menuRowDisabled: { opacity: 0.55 },
-  shelfTitleButton: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: colors.border },
-  shelfTitleText: { color: colors.text, fontSize: 16, fontWeight: "700" },
-  categoryPanel: { position: "absolute", top: 104, left: 16, right: 16, backgroundColor: colors.background, borderRadius: 12, borderWidth: 1, borderColor: colors.border, padding: spacing.sm, flexDirection: "row", flexWrap: "wrap", gap: 8, zIndex: 10, elevation: 8, shadowColor: "#000", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 10 },
   shelfChipsRow: { marginTop: 2 },
   shelfChipsContent: { flexDirection: "row", gap: 8, paddingHorizontal: 14, paddingVertical: 4 },
   shelfChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.border },

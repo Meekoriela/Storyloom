@@ -68,7 +68,7 @@ import {
   setActiveStyleProfile,
 } from "@/data/style-repositories";
 import type { RootTabParamList } from "@/navigation/types";
-import { getAgentDefinitions, getWriteApproval, saveWriteApproval, type AgentDefinition, type WriteApprovalMode } from "@/settings/config";
+import { TOOL_CATALOG, getAgentDefinitions, getWriteApproval, saveWriteApproval, type AgentDefinition, type WriteApprovalMode } from "@/settings/config";
 import { useAppStore } from "@/store/app-store";
 import { colors, radius, shadow, spacing, themedStyles } from "@/theme";
 import { useAppearance } from "@/theme-context";
@@ -197,6 +197,23 @@ function requestToolApproval(
       resolve,
     });
     else resolve(false);
+  });
+}
+
+/**
+ * 🔴 临时埋点（量完即删）：点一下之后量两帧。
+ *
+ * 「首帧」= 点击到第一帧绘制前（同步活与提交走了多久）；「落定」= 再下一帧（渲染与布局
+ * 走完）。点作品与点对话各打一行，两个数一比就知道差在哪一段。读取入口是
+ * 设置 → 高级 → 导出诊断报告。
+ */
+function probeSelect(label: string) {
+  const startedAt = Date.now();
+  requestAnimationFrame(() => {
+    const firstFrame = Date.now();
+    requestAnimationFrame(() => {
+      appendBreadcrumb(`__perf ${label} 首帧${firstFrame - startedAt}ms 落定${Date.now() - startedAt}ms`);
+    });
   });
 }
 
@@ -354,8 +371,48 @@ export function AssistantScreen() {
    * 重渲染。节流后刷新频率与模型吐字速度解耦。
    */
   const flushLiveTrace = useMemo(() => throttle((trace: AgentRunTrace) => setLiveTrace(trace), 150), []);
-  // 离开页面时丢弃挂起的那一次刷新，不给已卸载的组件发 setState。
-  useEffect(() => () => flushLiveTrace.cancel(), [flushLiveTrace]);
+  /**
+   * 🔴 临时埋点（量完即删）：流式期间逐帧记帧间隔，整轮跑完写一行。
+   *
+   * 为什么不用「setState 到下一帧」那种量法：两次 requestAnimationFrame 自带一帧多的
+   * 固定等待，与旧的 setTimeout(…, 260) 是同一个毛病 —— 基线把信号吃掉。帧间隔没有基线：
+   * 一帧超过 50ms 就是实打实的掉帧，均值与峰值直接反映流式期间顺不顺。
+   */
+  const frameProbe = useRef({ raf: 0, last: 0, count: 0, total: 0, peak: 0, jank: 0 });
+
+  const startFrameProbe = useCallback(() => {
+    const stat = frameProbe.current;
+    if (stat.raf) cancelAnimationFrame(stat.raf);
+    stat.last = 0; stat.count = 0; stat.total = 0; stat.peak = 0; stat.jank = 0;
+    const tick = (stamp: number) => {
+      if (stat.last) {
+        const delta = Math.round(stamp - stat.last);
+        stat.count += 1;
+        stat.total += delta;
+        if (delta > stat.peak) stat.peak = delta;
+        if (delta > 50) stat.jank += 1;
+      }
+      stat.last = stamp;
+      stat.raf = requestAnimationFrame(tick);
+    };
+    stat.raf = requestAnimationFrame(tick);
+  }, []);
+
+  const stopFrameProbe = useCallback(() => {
+    const stat = frameProbe.current;
+    if (!stat.raf) return;
+    cancelAnimationFrame(stat.raf);
+    stat.raf = 0;
+    if (stat.count) {
+      appendBreadcrumb(`__perf 流式帧 ${stat.count}帧 均${Math.round(stat.total / stat.count)}ms 峰${stat.peak}ms 卡${stat.jank}次`);
+    }
+  }, []);
+
+  // 离开页面时丢弃挂起的那一次刷新，不给已卸载的组件发 setState；帧统计一并收掉。
+  useEffect(() => () => {
+    flushLiveTrace.cancel();
+    if (frameProbe.current.raf) cancelAnimationFrame(frameProbe.current.raf);
+  }, [flushLiveTrace]);
   /**
    * 正在写出的正文。
    *
@@ -1054,6 +1111,7 @@ export function AssistantScreen() {
     setInput("");
     setLiveTrace(null);
     flushLiveTrace.cancel();
+    startFrameProbe();
     let userMessage = retry?.userMessage ?? null;
     let nextHistory = retry?.history ?? [];
     let userMessageSaved = Boolean(userMessage);
@@ -1151,6 +1209,7 @@ export function AssistantScreen() {
       setRetryRequest(null);
       setLiveTrace(null);
       flushLiveTrace.cancel();
+      stopFrameProbe();
       setUndoTarget(undoLabel());
       setAttachments([]);
     } catch (sendError) {
@@ -1190,6 +1249,7 @@ export function AssistantScreen() {
       if (isCurrentRequest()) {
         setLiveTrace(null);
         flushLiveTrace.cancel();
+        stopFrameProbe();
       }
     } finally {
       if (isCurrentRequest()) setSending(false);
@@ -1310,10 +1370,15 @@ export function AssistantScreen() {
                   <View style={styles.writeDialogBackdrop}>
                     <View style={styles.writeDialogCard}>
                       <View style={styles.writeCardHeader}>
-                        <Text style={styles.writeCardTitle}>写入确认</Text>
+                        <Text style={styles.writeCardTitle}>{TOOL_CATALOG.find((tool) => tool.key === writeCard.name)?.name ?? "写入确认"}</Text>
                         <Text numberOfLines={1} style={styles.writeCardTarget}>{writeCard.target ?? writeCard.name}</Text>
                         <Text style={styles.writeBadge}>待确认</Text>
                       </View>
+                      {/* 新建作品是唯一会在书架里多出一部作品的动作（其余都落在当前作品内），
+                          单列一行说明它落在哪，与写正文那几类分开。 */}
+                      {writeCard.name === "create_project" ? (
+                        <Text style={styles.writeCardAlert}>将在书架里新建一部作品，与当前作品并列</Text>
+                      ) : null}
                       <AdaptiveScroll maxHeight={300} style={styles.writeCardScroll}>
                         {writeCard.actionOnly ? (
                           <Text style={styles.writeCardDetails}>{writeCard.after}</Text>
@@ -1801,17 +1866,14 @@ export function AssistantScreen() {
           // （切作品还要跑一次 load() 的整页重载），两者叠在一起会掉一帧。
           // 选对话那条本来就先收抽屉，这里与之对齐。
           setDrawerVisible(false);
-          // 🔴 临时埋点（量完即删）：点作品到抽屉收起动画结束、load() 开始的间隔。
-          // 若这个数接近 190（抽屉收起动画时长），说明是动画与重活叠在一起；
-          // 若是几十，动画不背这个锅，得往 load() 里查。
-          const __tClick = Date.now();
-          setTimeout(() => {
-            appendBreadcrumb(`__perf 抽屉点击后 ${Date.now() - __tClick}ms`);
-          }, 260);
+          // 🔴 临时埋点（量完即删）：量两点，说明见 probeSelect。
+          probeSelect("点作品");
           setCurrentProject(target.id);
         }}
         onSelectSession={(target, session) => {
           setDrawerVisible(false);
+          // 🔴 临时埋点（量完即删）：与「点作品」同一条埋点，用作对照。
+          probeSelect("点对话");
           if (target.id === effectiveProjectId) {
             void switchSession(session);
             return;
@@ -1979,6 +2041,7 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   writeCardTitle: { color: colors.text, fontSize: 18, fontWeight: "700" },
   writeCardTarget: { flexShrink: 1, minWidth: 0, color: colors.textMuted, fontSize: 12 },
   writeCardDetails: { marginTop: spacing.xs, color: colors.text, fontSize: 12, lineHeight: 18 },
+  writeCardAlert: { color: colors.accent, fontSize: 12, lineHeight: 18, fontWeight: "700" },
   writeCardActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm, marginTop: spacing.sm },
   // 与提问卡的两个按钮同一套尺寸（34 / 13），比共享 Button 小一档。
   writeCardButtonSecondary: {

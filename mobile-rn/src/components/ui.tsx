@@ -70,12 +70,35 @@ export function Header({ title, action, onBack, leading }: { title?: ReactNode; 
   );
 }
 
-export function Field({ label, style, ...props }: TextInputProps & { label: string }) {
+export function Field({ label, style, adaptive = false, ...props }: TextInputProps & { label: string; adaptive?: boolean }) {
+  // 名称类的短字段传 adaptive：宽度跟着内容走，不铺满整行。
+  // 可编辑输入框不会按内容收缩，所以用一颗不可见文本把当前值量出来（空值时量 placeholder，
+  // 再退回标签），按量到的宽度定框；输入超过一行宽时由 maxWidth 兜住。
+  const [measuredWidth, setMeasuredWidth] = useState(0);
+  const measureSource = String(props.value ?? "").trim() || props.placeholder || label;
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
       {/* 用数组合并样式：调用方传 style 时只做覆盖（例如多行高度），不会丢掉输入框自己的边框与内边距 */}
-      <TextInput placeholderTextColor={colors.textMuted} {...props} style={[styles.input, style]} />
+      {adaptive ? (
+        <View>
+          <Text
+            pointerEvents="none"
+            numberOfLines={1}
+            onLayout={(event) => setMeasuredWidth(Math.ceil(event.nativeEvent.layout.width))}
+            style={styles.adaptiveMeasure}
+          >
+            {measureSource}
+          </Text>
+          <TextInput
+            placeholderTextColor={colors.textMuted}
+            {...props}
+            style={[styles.input, styles.adaptiveInput, measuredWidth ? { width: measuredWidth + spacing.md * 2 + 2 } : null, style]}
+          />
+        </View>
+      ) : (
+        <TextInput placeholderTextColor={colors.textMuted} {...props} style={[styles.input, style]} />
+      )}
     </View>
   );
 }
@@ -809,6 +832,10 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
+  // adaptive 的两个配套：量宽文本脱离文档流且不可见，只有量出来的宽度有用；
+  // 兜底宽度留 100%，值长到超出一行时框内滚动，不把卡片撑破。
+  adaptiveMeasure: { position: "absolute", left: 0, top: 0, opacity: 0, color: colors.text, fontSize: 16 },
+  adaptiveInput: { maxWidth: "100%" },
   // 长文本字段两态：收起 120（四行预览，行高 22），展开最高 320、超出在框内滚。
   expandableField: { position: "relative" },
   expandableToggle: { position: "absolute", top: 0, right: 0, width: 32, height: 24, alignItems: "center", justifyContent: "center" },

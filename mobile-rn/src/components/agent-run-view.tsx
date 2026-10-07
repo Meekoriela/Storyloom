@@ -419,7 +419,9 @@ export function AgentTraceView({
    */
   listAtBottomRef?: RefObject<boolean>;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded || trace.status === "running");
+  // 失败轨迹初始即展开：限流一类的错误常常打断在思考中途，那时轨迹里已经有内容，
+  // 收起来等于把已经产出的过程藏掉。开头就失败的轨迹本就是空的，展开也不会多占篇幅。
+  const [expanded, setExpanded] = useState(defaultExpanded || trace.status === "running" || trace.status === "error");
   const previousStatus = useRef(trace.status);
 
   // 只在状态真的发生变化时收，避免覆盖调用方给 defaultExpanded 的显式意图。
@@ -829,7 +831,7 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.primary,
     borderRadius: radius.md,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.background,
     color: colors.text,
     fontSize: 15,
     lineHeight: 21,
