@@ -127,6 +127,8 @@ export function WorldInfoScreen() {
     setError(null);
     try {
       setWorldInfo(await saveWorldInfo({ id: worldInfo.id, projectId: worldInfo.projectId, name: bookName, description: bookDescription }));
+      // 这两个字段在界面上没有第二处展示，保存后不提示就等于什么都没发生。
+      showNotice("已保存");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
     } finally {
@@ -282,6 +284,7 @@ export function WorldInfoScreen() {
             contentContainerStyle={entries.length ? styles.list : styles.emptyList}
             ListHeaderComponent={
               <View style={styles.bookForm}>
+                <Text style={styles.bookFormHint}>名称与说明属于当前作品的世界书，一个作品只有一本；下方条目是这本书的内容</Text>
                 <Field label="世界书名称" value={bookName} onChangeText={setBookName} adaptive />
                 <Field label="说明" value={bookDescription} onChangeText={setBookDescription} multiline textAlignVertical="top" style={styles.bookDescription} />
                 <Button label="保存世界书信息" onPress={() => void saveBook()} disabled={!bookName.trim()} loading={saving} />
@@ -295,16 +298,17 @@ export function WorldInfoScreen() {
                 <View style={styles.entryText}>
                   <View style={styles.entryTitleLine}>
                     <Text numberOfLines={1} style={styles.entryName}>{item.name}</Text>
-                    <Switch value={item.isEnabled} onValueChange={(value) => {
-                      void saveWorldInfoEntry({ ...item, worldInfoId: item.worldInfoId, isEnabled: value })
-                        .then((saved) => setEntries((current) => current.map((entry) => entry.id === saved.id ? saved : entry)))
-                        .catch((toggleError) => setError(toggleError instanceof Error ? toggleError.message : String(toggleError)));
-                    }} trackColor={{ false: colors.border, true: colors.primary }} />
                   </View>
                   <Text numberOfLines={2} style={styles.entryContent}>{item.content || "暂无内容"}</Text>
                   {triggerSummary(item) ? <Text numberOfLines={1} style={styles.entryTrigger}>{triggerSummary(item)}</Text> : null}
                 </View>
                 <View style={styles.rowActions}>
+                  {/* 开关移入行尾这一列：位置固定，不再随名称长短在行中段游动。 */}
+                  <Switch value={item.isEnabled} onValueChange={(value) => {
+                    void saveWorldInfoEntry({ ...item, worldInfoId: item.worldInfoId, isEnabled: value })
+                      .then((saved) => setEntries((current) => current.map((entry) => entry.id === saved.id ? saved : entry)))
+                      .catch((toggleError) => setError(toggleError instanceof Error ? toggleError.message : String(toggleError)));
+                  }} trackColor={{ false: colors.border, true: colors.primary }} />
                   <ScalePress accessibilityLabel={`导出世界书条目 ${item.name}`} disabled={exporting} onPress={(event) => { event.stopPropagation(); chooseExport([item], `导出条目“${item.name}”`); }} hitSlop={8} style={styles.iconButton}>
                     <Ionicons name="download-outline" size={19} color={colors.textMuted} />
                   </ScalePress>
@@ -427,6 +431,8 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   emptyList: { flexGrow: 1 },
   bookForm: { gap: spacing.md, padding: spacing.lg, paddingBottom: spacing.xl, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   bookDescription: { minHeight: 90 },
+  // 与下方首个字段的距离 = 容器 gap 12 ＋ 本行 marginBottom 4 = 16：比字段内 label→输入框的 8 拉开一档。
+  bookFormHint: { color: colors.textMuted, fontSize: 13, lineHeight: 19, marginBottom: spacing.xs },
   sectionTitle: { color: colors.text, fontSize: 17, fontWeight: "700", marginTop: spacing.sm },
   entryRow: { minHeight: 90, flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   rowPressed: { backgroundColor: colors.surfaceMuted },

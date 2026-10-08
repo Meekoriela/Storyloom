@@ -362,7 +362,7 @@ export const agentTools: AgentToolDefinition[] = [
       type: "object",
       properties: {
         title: { type: "string", description: "笔记标题" },
-        content: { type: "string", description: "笔记内容" },
+        content: { type: "string", description: "笔记内容，纯文本，不带排版标记" },
         volume_id: { type: "string", description: "归属卷 ID；只写卷则为卷级笔记" },
         chapter_id: { type: "string", description: "归属章节 ID；写了则为章级笔记，卷自动跟随该章" },
       },
@@ -460,7 +460,7 @@ export const agentTools: AgentToolDefinition[] = [
       type: "object",
       properties: {
         title: { type: "string" },
-        content: { type: "string" },
+        content: { type: "string", description: "章节正文，纯文本，不含标题行与排版标记" },
         volume_id: { type: "string", description: "可选的卷 ID" },
       },
       required: ["title", "content"],

@@ -17,9 +17,10 @@ import {
   View,
 } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import * as Clipboard from "expo-clipboard";
 import { mascotSource, normalizeMascotKind } from "@/settings/mascots";
 
-import { AgentRunError, runAgent } from "@/agent/runtime";
+import { AgentRunError, listSelectableSkills, runAgent } from "@/agent/runtime";
 import { isDestructiveTool, undoLastWrite, undoLabel, type WritePreview } from "@/agent/write-review";
 import {
   attachmentContextBlock,
@@ -228,6 +229,9 @@ function activeAgentSettingKey(projectId: string): string {
 
 /** Plan 只规划不动笔：它出的那条消息下方多一颗「按这个计划开工」。 */
 const PLAN_AGENT_ID = "builtin-agent--plan";
+/** 长按菜单的固定尺寸：宽照参考实测 198；高 = 3 行 × 45 ＋ 卡内上下内边距 8。 */
+const MESSAGE_MENU_WIDTH = 198;
+const MESSAGE_MENU_HEIGHT = 143;
 
 function generatedSessionTitle(content: string): string {
   return content.replace(/\s+/g, " ").trim().slice(0, 24) || "新对话";
@@ -247,6 +251,9 @@ async function resolveSelection(
   if (!apiKey) throw new Error(`${provider.name} 没有可用的 API Key，请到设置页重新保存`);
   return { provider, model, apiKey };
 }
+
+/** 输入框「技能」面板里点选的一条技能；面板与 chip 只用这三个字段。 */
+type PickedSkill = { id: string; name: string; description: string };
 
 type RetryRequest = {
   sessionId: string;
@@ -343,6 +350,21 @@ export function AssistantScreen() {
   const [sending, setSending] = useState(false);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const [loading, setLoading] = useState(true);
+  /**
+   * 加载超过 200ms 才画转圈。
+   *
+   * 实测 load() 多在 40~140ms —— 短于人会察觉的时长。一上来就画一个转圈再抹掉，
+   * 本身就是一次"闪"。只有真的慢下来才值得给出指示。
+   */
+  const [slowHint, setSlowHint] = useState(false);
+  useEffect(() => {
+    if (!loading) {
+      setSlowHint(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlowHint(true), 200);
+    return () => clearTimeout(timer);
+  }, [loading]);
   const [error, setError] = useState<string | null>(null);
   /** 作品与对话抽屉：全部作品与它们各自的对话都收在里面。 */
   const [drawerVisible, setDrawerVisible] = useState(false);
@@ -431,10 +453,23 @@ export function AssistantScreen() {
   const [undoTarget, setUndoTarget] = useState<string | null>(null);
   // 写入审批方式：过了工具权限那道门之后，是等你点一下，还是直接放行。默认等你点。
   const [writeApproval, setWriteApproval] = useState<WriteApprovalMode>("ask");
-  // 输入框「+」上的菜单：null 关闭 / "root" 附件与权限 / "approval" 权限的两档。
-  const [composerMenu, setComposerMenu] = useState<null | "root" | "approval">(null);
+  // 输入框「+」上的菜单：null 关闭 / "root" 附件、权限与技能 / "approval" 权限的两档 / "skill" 技能列表。
+  const [composerMenu, setComposerMenu] = useState<null | "root" | "approval" | "skill">(null);
   // 待随下一条消息发送的文本附件
   const [attachments, setAttachments] = useState<TextAttachment[]>([]);
+  // 技能面板：候选、搜索词，以及已点选的那一条（只作用于下一条消息，发送即清）。
+  const [skillOptions, setSkillOptions] = useState<PickedSkill[]>([]);
+  const [skillQuery, setSkillQuery] = useState("");
+  const [pickedSkill, setPickedSkill] = useState<PickedSkill | null>(null);
+  // 消息长按菜单：记下被按的那条与按压点的屏幕坐标，卡片贴着那一点出现。
+  const [messageMenu, setMessageMenu] = useState<{ id: string; pageX: number; pageY: number } | null>(null);
+  const [selectableMessageId, setSelectableMessageId] = useState<string | null>(null);
+  // 消息区的窗口坐标与尺寸：把按压点的屏幕坐标换算成卡片在消息区里的位置。
+  const messagesAreaRef = useRef<View>(null);
+  const [messagesArea, setMessagesArea] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const measureMessagesArea = useCallback(() => {
+    messagesAreaRef.current?.measureInWindow((x, y, width, height) => setMessagesArea({ x, y, width, height }));
+  }, []);
   const [writeCard, setWriteCard] = useState<WriteCardRequest | null>(null);
   const [writeDiffExpanded, setWriteDiffExpanded] = useState(false);
   const [pendingQuestion, setPendingQuestion] = useState<AgentClarificationRequest | null>(null);
@@ -1176,11 +1211,16 @@ export function AssistantScreen() {
         : null;
       const runHistory = attachmentMessage ? [...nextHistory, attachmentMessage] : nextHistory;
       const requestStartedAt = Date.now();
+      // 技能只作用于本条消息：先把值取下来，再把 chip 清掉，下一轮回到按关键词判定。
+      const pickedSkillName = pickedSkill?.name ?? null;
+      setPickedSkill(null);
+      setMessageMenu(null);
       const response = await runAgent({
         project: readyProject,
         selection: runSelection,
         history: runHistory,
         agentId: retry?.agentId ?? activeAgentId,
+        pickedSkillName,
         approveTool: (name, args, preview) =>
           requestToolApproval(emitWriteCard, requestId, name, args, preview, writeApproval),
         askUser,
@@ -1282,8 +1322,8 @@ export function AssistantScreen() {
     [contextWindow, historyLimit, messages],
   );
 
-  // 同写作页：只在首次没有任何数据时早退，避免切作品 / 写操作的刷新把整页连同抽屉一起重建。
-  if (loading && !project) return <Screen><Header title="助手" /><View style={styles.loading}><ActivityIndicator color={colors.primary} /></View></Screen>;
+  // 不再为「首次没有数据」另开一屏：早退会把整棵页面树换成「顶栏 + 转圈」再换回来，
+  // 那一下就是刷新感。页面骨架常驻，数据与空态都落在消息区这一格里替换。
   return (
     <Screen>
       <Header
@@ -1341,7 +1381,7 @@ export function AssistantScreen() {
         </Text>
         <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
       </Pressable>
-      <KeyboardAvoidingView style={styles.flex} behavior="height" automaticOffset>
+      <KeyboardAvoidingView ref={messagesAreaRef} onLayout={measureMessagesArea} style={styles.flex} behavior="height" automaticOffset>
         <FlatList
           style={styles.flex}
           data={reversedMessages}
@@ -1353,7 +1393,7 @@ export function AssistantScreen() {
           // 位置上，表现为文字堆在一起或滑到一片空白。
           inverted
           // 只记位置、不写 state：跑完自动收起前要问"用户是不是停在最新这一端"。
-          onScroll={(event) => { atBottomRef.current = event.nativeEvent.contentOffset.y <= 8; }}
+          onScroll={(event) => { atBottomRef.current = event.nativeEvent.contentOffset.y <= 8; if (messageMenu) setMessageMenu(null); }}
           scrollEventThrottle={16}
           contentContainerStyle={messages.length ? styles.messages : styles.emptyMessages}
           ListHeaderComponent={sending || liveTrace || writeCard ? (
@@ -1459,24 +1499,43 @@ export function AssistantScreen() {
               ) : null}
             </View>
           ) : null}
-          ListEmptyComponent={models.length ? (
-            <View style={styles.welcomeBox}>
-              <Text style={styles.welcomeTitle}>聊灵感、记想法</Text>
-              <View style={styles.welcomeChipsRow}>
-              {/* 建议只填进输入框：创建作品与会话留给点发送那一刻。 */}
-              {["记一个灵感", "梳理一下我的想法", "随便聊聊"].map((suggestion) => (
-                <ScalePress key={suggestion} style={styles.welcomeChip} onPress={() => setInput(suggestion)}>
-                  <Text style={styles.welcomeChipText}>{suggestion}</Text>
-                </ScalePress>
-              ))}
+          // 加载中不插任何中间态：这一段实测只有几十毫秒，画出来马上又抹掉，本身就是
+          // 一次闪。慢到 200ms 以上才给转圈（slowHint）。空态容器的尺寸由 emptyMessages
+          // 固定住，不渲染内容也不会产生位移。
+          ListEmptyComponent={loading
+            ? (slowHint ? (
+              <View style={styles.loading}>
+                <ActivityIndicator color={colors.primary} />
               </View>
-            </View>
-          ) : (
-            <EmptyState title="请先配置供应商并添加模型" action={<Button label="打开模型设置" onPress={() => navigation.navigate("Settings")} />} />
-          )}
+            ) : null)
+            : models.length
+              ? (
+                <View style={styles.welcomeBox}>
+                  <Text style={styles.welcomeTitle}>聊灵感、记想法</Text>
+                  <View style={styles.welcomeChipsRow}>
+                  {/* 建议只填进输入框：创建作品与会话留给点发送那一刻。 */}
+                  {["记一个灵感", "梳理一下我的想法", "随便聊聊"].map((suggestion) => (
+                    <ScalePress key={suggestion} style={styles.welcomeChip} onPress={() => setInput(suggestion)}>
+                      <Text style={styles.welcomeChipText}>{suggestion}</Text>
+                    </ScalePress>
+                  ))}
+                  </View>
+                </View>
+              )
+              : (
+                <EmptyState title="请先配置供应商并添加模型" action={<Button label="打开模型设置" onPress={() => navigation.navigate("Settings")} />} />
+              )}
           renderItem={({ item }) => (
             <View>
-            <View style={[styles.message, item.role === "user" ? styles.userMessage : styles.assistantMessage]}>
+            <Pressable
+              // 长按出操作菜单只对用户消息开放；按压点决定卡片落在哪儿，点空白处收起。
+              onLongPress={item.role === "user" ? (event) => {
+                setSelectableMessageId(null);
+                const { pageX, pageY } = event.nativeEvent;
+                setMessageMenu({ id: item.id, pageX, pageY });
+              } : undefined}
+              style={[styles.message, item.role === "user" ? styles.userMessage : styles.assistantMessage]}
+            >
               {(() => {
                 const messageRetry = retryRequestForMessage(item, messages, activeSession, selection, activeAgentId);
                 const failed = item.role === "assistant" && (item.metadata?.taskStatus === "failed" || item.metadata?.agentTrace?.status === "error");
@@ -1512,7 +1571,8 @@ export function AssistantScreen() {
                   ))}
                 </View>
               ) : null}
-              <Text selectable style={[styles.messageText, chatTextStyle]}>{item.content}</Text>
+              {/* 用户消息平时不可选中：长按要留给操作菜单，选中态由菜单里的「选择文本」进入。 */}
+              <Text selectable={item.role !== "user" || item.id === selectableMessageId} style={[styles.messageText, chatTextStyle]}>{item.content}</Text>
 
               {item.role === "assistant" && messageRetry ? (
                 <MessageActionBar
@@ -1525,19 +1585,43 @@ export function AssistantScreen() {
                   </>
                 );
               })()}
-            </View>
+            </Pressable>
             {item.role === "user" ? (
               <View style={styles.messageEditRowOutside}>
                 <Text style={styles.messageTime}>{formatMessageTime(item.createdAt)}</Text>
-                <Pressable accessibilityLabel="编辑这条消息" disabled={sending} onPress={() => beginEditMessage(item)} style={styles.messageEditButton}>
-                  <Ionicons name="create-outline" size={15} color={colors.textMuted} />
-                  <Text style={styles.messageEditText}>编辑</Text>
-                </Pressable>
               </View>
             ) : null}
             </View>
           )}
         />
+        {/* 长按菜单：贴在按压点上，夹在消息区内不越界；点卡片外的任意位置收起。 */}
+        {messageMenu ? (() => {
+          const target = messages.find((message) => message.id === messageMenu.id) ?? null;
+          if (!target) return null;
+          const maxLeft = Math.max(spacing.sm, messagesArea.width - MESSAGE_MENU_WIDTH - spacing.sm);
+          const maxTop = Math.max(spacing.sm, messagesArea.height - MESSAGE_MENU_HEIGHT - spacing.sm);
+          const left = Math.min(Math.max(messageMenu.pageX - messagesArea.x - MESSAGE_MENU_WIDTH / 2, spacing.sm), maxLeft);
+          const top = Math.min(Math.max(messageMenu.pageY - messagesArea.y - MESSAGE_MENU_HEIGHT / 2, spacing.sm), maxTop);
+          return (
+            <View style={styles.messageMenuLayer} pointerEvents="box-none">
+              <Pressable accessibilityLabel="关闭消息菜单" style={StyleSheet.absoluteFill} onPress={() => setMessageMenu(null)} />
+              <View style={[styles.messageMenu, { left, top }]}>
+                <Pressable accessibilityLabel="复制" onPress={() => { void Clipboard.setStringAsync(target.content); setMessageMenu(null); }} style={({ pressed }) => [styles.messageMenuRow, pressed && styles.composerMenuRowPressed]}>
+                  <Ionicons name="copy-outline" size={16} color={colors.textMuted} />
+                  <Text style={styles.composerMenuText}>复制</Text>
+                </Pressable>
+                <Pressable accessibilityLabel="选择文本" onPress={() => { setSelectableMessageId(target.id); setMessageMenu(null); }} style={({ pressed }) => [styles.messageMenuRow, pressed && styles.composerMenuRowPressed]}>
+                  <Ionicons name="text-outline" size={16} color={colors.textMuted} />
+                  <Text style={styles.composerMenuText}>选择文本</Text>
+                </Pressable>
+                <Pressable accessibilityLabel="修改" disabled={sending} onPress={() => { setMessageMenu(null); beginEditMessage(target); }} style={({ pressed }) => [styles.messageMenuRow, pressed && styles.composerMenuRowPressed]}>
+                  <Ionicons name="create-outline" size={16} color={colors.textMuted} />
+                  <Text style={styles.composerMenuText}>修改</Text>
+                </Pressable>
+              </View>
+            </View>
+          );
+        })() : null}
         {error ? <View style={styles.errorWrap}><ErrorNotice message={error} onRetry={retryRequest ? () => void send(retryRequest) : () => void load()} /></View> : null}
         {undoTarget && !sending ? (
           <View style={styles.undoBanner}>
@@ -1571,8 +1655,17 @@ export function AssistantScreen() {
               />
             </View>
           ) : null}
-          {attachments.length ? (
+          {attachments.length || pickedSkill ? (
             <View style={styles.attachmentRow}>
+              {pickedSkill ? (
+                <View style={styles.attachmentChip}>
+                  <Ionicons name="sparkles-outline" size={14} color={colors.primary} />
+                  <Text numberOfLines={1} style={styles.attachmentName}>{pickedSkill.name}</Text>
+                  <Pressable accessibilityLabel={`取消技能 ${pickedSkill.name}`} onPress={() => setPickedSkill(null)} style={styles.attachmentRemove}>
+                    <Ionicons name="close" size={15} color={colors.textMuted} />
+                  </Pressable>
+                </View>
+              ) : null}
               {attachments.map((item) => (
                 <View key={item.name} style={styles.attachmentChip}>
                   <Ionicons name="document-text-outline" size={14} color={colors.primary} />
@@ -1620,8 +1713,21 @@ export function AssistantScreen() {
                     <Text style={styles.composerMenuText}>权限</Text>
                     <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
                   </Pressable>
+                  <Pressable
+                    accessibilityLabel="选择技能"
+                    onPress={() => {
+                      setComposerMenu("skill");
+                      setSkillQuery("");
+                      void listSelectableSkills().then(setSkillOptions).catch(() => setSkillOptions([]));
+                    }}
+                    style={({ pressed }) => [styles.composerMenuRow, pressed && styles.composerMenuRowPressed]}
+                  >
+                    <Ionicons name="sparkles-outline" size={16} color={colors.textMuted} />
+                    <Text style={styles.composerMenuText}>技能</Text>
+                    <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+                  </Pressable>
                 </>
-              ) : (
+              ) : composerMenu === "approval" ? (
                 <>
                   <Pressable accessibilityLabel="返回" onPress={() => setComposerMenu("root")} style={styles.composerMenuBack}>
                     <Ionicons name="chevron-back" size={13} color={colors.textMuted} />
@@ -1645,6 +1751,42 @@ export function AssistantScreen() {
                     </Pressable>
                   ))}
                 </>
+              ) : (
+                <>
+                  <Pressable accessibilityLabel="返回" onPress={() => setComposerMenu("root")} style={styles.composerMenuBack}>
+                    <Ionicons name="chevron-back" size={13} color={colors.textMuted} />
+                    <Text style={styles.composerMenuBackText}>技能</Text>
+                  </Pressable>
+                  <Text style={styles.composerMenuHint}>选中后本条消息强制加载该技能的完整指令</Text>
+                  <TextInput
+                    value={skillQuery}
+                    onChangeText={setSkillQuery}
+                    placeholder="搜索技能"
+                    placeholderTextColor={colors.textMuted}
+                    style={styles.skillSearch}
+                  />
+                  <AdaptiveScroll maxHeight={260} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.skillList}>
+                    {skillOptions
+                      .filter((skill) => {
+                        const keyword = skillQuery.trim();
+                        return !keyword || skill.name.includes(keyword) || skill.description.includes(keyword);
+                      })
+                      .map((skill) => (
+                        <Pressable
+                          key={skill.id}
+                          accessibilityLabel={skill.name}
+                          onPress={() => { setPickedSkill(skill); setComposerMenu(null); }}
+                          style={[styles.approvalOption, pickedSkill?.id === skill.id && styles.approvalOptionActive]}
+                        >
+                          <View style={styles.approvalCopy}>
+                            <Text style={[styles.approvalTitle, pickedSkill?.id === skill.id && styles.approvalTitleActive]}>{skill.name}</Text>
+                            <Text style={styles.approvalHint}>{skill.description}</Text>
+                          </View>
+                          {pickedSkill?.id === skill.id ? <Ionicons name="checkmark" size={15} color={colors.primary} /> : null}
+                        </Pressable>
+                      ))}
+                  </AdaptiveScroll>
+                </>
               )}
             </View>
           ) : null}
@@ -1661,7 +1803,7 @@ export function AssistantScreen() {
               ref={composerRef}
               value={input}
               onChangeText={setInput}
-              onFocus={() => setComposerMenu(null)}
+              onFocus={() => { setComposerMenu(null); setMessageMenu(null); }}
               style={styles.composerInput}
               placeholder={editingMessageId ? "修改后重新发送" : "输入创作任务"}
               placeholderTextColor={colors.textMuted}
@@ -1979,13 +2121,13 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   liveTimeline: { marginTop: spacing.md, gap: spacing.sm },
   // 流式正文：与落定后的消息气泡同一套排版，只是还没进消息列表。
   streamingBubble: { gap: spacing.xs, paddingVertical: spacing.xs },
-  emptyMessages: { flexGrow: 1 },
+  // 与 messages 同内边距：消息从 0 条变为有内容时，容器的几何不跟着变，避免布局位移。
+  // flexGrow 保留 —— 空态要让欢迎屏在剩余高度里居中。
+  emptyMessages: { flexGrow: 1, padding: spacing.lg },
   // 消息内间距比别处紧一档（12 → 8）：过程轨迹与正文要连成一段，不能再被空档切开。
   message: { gap: spacing.sm, paddingVertical: spacing.md },
   messageEditRowOutside: { alignSelf: "flex-end", flexDirection: "row", alignItems: "center", gap: 10, marginTop: 2, paddingRight: 2 },
-  messageEditButton: { minHeight: 32, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.xs },
   messageTime: { color: colors.textMuted, fontSize: 12 },
-  messageEditText: { color: colors.textMuted, fontSize: 13, fontWeight: "700" },
   userMessage: { alignSelf: "flex-end", maxWidth: "88%", paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceMuted },
   assistantMessage: {},
   messageText: { color: colors.text, fontSize: 16, lineHeight: 24 },
@@ -2012,6 +2154,19 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
     paddingVertical: spacing.xs,
     ...shadow.card,
   },
+  // 消息长按菜单：跟随按压点定位（left / top 由按压坐标算出），宽 198、行高 45 照参考实测，其余取现有值。
+  messageMenuLayer: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 20 },
+  messageMenu: {
+    position: "absolute",
+    width: 198,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingVertical: spacing.xs,
+    ...shadow.card,
+  },
+  messageMenuRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 45, paddingHorizontal: spacing.md },
   composerMenuRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 40, paddingHorizontal: spacing.md },
   composerMenuRowPressed: { backgroundColor: colors.surfaceMuted },
   composerMenuRowDisabled: { opacity: 0.55 },
@@ -2019,6 +2174,9 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   composerMenuBack: { flexDirection: "row", alignItems: "center", gap: 2, minHeight: 26, paddingHorizontal: spacing.md },
   composerMenuBackText: { color: colors.textMuted, fontSize: 11 },
   composerMenuHint: { paddingHorizontal: spacing.md, paddingBottom: spacing.xs, color: colors.textMuted, fontSize: 11 },
+  // 技能面板的搜索框：取值与设置页的搜索框一致（minHeight 42 / radius.md / border / 14 号）。
+  skillSearch: { minHeight: 42, marginHorizontal: spacing.md, marginBottom: spacing.xs, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background, color: colors.text, fontSize: 14 },
+  skillList: { paddingBottom: spacing.xs },
   approvalOption: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, marginHorizontal: spacing.xs, borderRadius: radius.sm, padding: spacing.sm },
   approvalOptionActive: { backgroundColor: colors.surfaceMuted },
   approvalCopy: { flex: 1 },

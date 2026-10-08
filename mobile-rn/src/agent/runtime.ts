@@ -515,7 +515,11 @@ function systemPrompt(input: {
 用户明确给出新的创作决定、角色变化、世界规则或剧情事实时，不要只在聊天中复述：先读取现有角色与世界书，确认属于正式设定后，调用 create/edit 工具同步到作品。若内容仍是脑暴、存在多种解释或是否采用尚不明确，先调用 ask_user 让用户确认，再写入；不得把未确认的备选想法当作正式设定。
 章节新增或修改后，优先根据当前正文判断角色或世界书是否真的发生变化；发现已确认的新事实时调用对应 create/edit 工具同步。不要为了形式上的检查阻塞当前任务，也不要在没有变化时反复读取全部资料。删除角色或世界书条目只响应用户明确要求。所有写工具仍受用户权限审批。
 用户要求写作正文（续写、成稿、重写某章）时，正文必须通过工具落到作品里：目标章节已存在就用 edit_chapter 写入该章节，只有需要新章节时才用 write_chapter；禁止把正文整篇贴在聊天里当作交付。落盘前会弹出用户的写入确认，用户接受后才生效。写完如需说明，用一两句话概述，不要重复贴出全文。
-用户明确要求向你提问时，必须调用 ask_user 工具，不得改在对话里直接发问；每道题都必须给出选项，即便问题本身是开放式的（如想要哪种结局），也要列出若干可能方向供用户挑选。任务存在会显著影响结果的偏好或歧义时，同样使用 ask_user 提出一至三个互不依赖的问题；问题本身已经清楚、无从选择题时才直接作答。
+写进章节正文与笔记的内容不带排版标记：正文里不写标题行（章节名只由 title 承载）、不用 ** 加粗、不用 | 列表格；笔记分条用「1. 」「· 」这类纯文本；伏笔账与改动说明不写进正文。
+提问只能走 ask_user，不得写进正文。判定：准备写出的内容若含下列任何一种，即为提问 —— ① 带问号的句子（反问与修辞除外）② 让用户二选一或多选一 ③ 请用户确认或补充信息 ④ 要用户拍板的创作决定（走向 / 篇幅 / 视角 / 是否采用某个设定）。
+禁止：问题不得出现在正文的开头、结尾或段落中间，也不得在给出方案之后追加征询意见的问句。正文只写已经确定的内容 —— 结论、已完成的动作、你即将执行的事。
+正确用法：调用 ask_user，一次一至三个互不依赖的问题；每道题给出选项，开放题也要列出若干可能方向。问完之后不在正文里复述这些问题，等答案回来继续往下做。
+不算提问、可以直接写在正文里的：反问、修辞性问句，以及思考过程中的自问。
 技能不能只凭名称假设内容；任务匹配技能说明时，先调用 activate_skill 加载完整指令。工具参数必须严格符合声明。`];
 
   if (input.consistencyReason) {
@@ -911,11 +915,34 @@ async function runAgentLoop(input: LoopInput): Promise<LoopResult> {
   throw new Error(`${input.agent.name} 工具调用次数过多，已停止本次任务`);
 }
 
+/**
+ * 输入框「技能」面板的候选：全部已启用技能，当前主智能体的常用项排在前面。
+ *
+ * 与运行时取的是同一批数据（`getAgentSkills` + 可用主智能体），避免面板列出运行时用不了的技能。
+ */
+export async function listSelectableSkills(): Promise<AgentSkill[]> {
+  const [skills, agents, activeAgentId] = await Promise.all([
+    getAgentSkills(),
+    getAgentDefinitions(),
+    getSetting("agent.activeDefinitionId"),
+  ]);
+  const enabled = skills.filter((skill) => skill.enabled);
+  let preferred = new Set<string>();
+  try {
+    preferred = preferredSkillIds(activePrimaryAgent(agents, activeAgentId));
+  } catch {
+    // 没有可用主智能体时不做优先排序，面板照常列出全部已启用技能。
+  }
+  return enabled.slice().sort((left, right) => Number(preferred.has(right.id)) - Number(preferred.has(left.id)));
+}
+
 export async function runAgent(input: {
   project: Project;
   selection: ModelSelection;
   history: ChatMessage[];
   agentId?: string | null;
+  /** 用户在输入框点名的技能名：给了就用它，压过按关键词的自动挑选。 */
+  pickedSkillName?: string | null;
   approveTool?: ToolApproval;
   askUser?: AskUser;
   onTrace?: TraceListener;
@@ -969,7 +996,11 @@ export async function runAgent(input: {
     || (requiresKnowledgeSynchronization(userRequest)
       ? "用户本轮提供了可能影响角色或世界书的创作决定"
       : null);
-  const requiredSkill = requiredSkillForRequest(catalog, agent, userRequest);
+  // 输入框点名的技能优先：否则 chip 选了大纲搭建、消息里又出现「正文」时，会按关键词用成另一个。
+  const pickedSkill = input.pickedSkillName
+    ? (enabledSkillsForAgent(catalog).find((skill) => skill.name === input.pickedSkillName || skill.id === input.pickedSkillName) ?? null)
+    : null;
+  const requiredSkill = pickedSkill ?? requiredSkillForRequest(catalog, agent, userRequest);
   const recorder = createTraceRecorder(agent, collaborationSuggested, input.onTrace);
 
   try {
