@@ -9,7 +9,7 @@ import { checkAppUpdate, downloadAndInstallUpdate, getAutoCheckUpdate, setAutoCh
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Linking, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Linking, Modal, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -242,11 +242,15 @@ function RuntimeResourceGate() {
 }
 
 const styles = themedStyles((colors) => StyleSheet.create({
-  updateBackdrop: { flex: 1, backgroundColor: colors.overlay, alignItems: "center", justifyContent: "center", padding: 28 },
-  updateCard: { alignSelf: "stretch", backgroundColor: colors.surface, borderRadius: 16, padding: 18 },
+  // 左右留白 39：照参考图实测的两侧留白（各 9.9% 屏宽）取，原来的 28 比它宽出一档。
+  updateBackdrop: { flex: 1, backgroundColor: colors.overlay, alignItems: "center", justifyContent: "center", padding: 39 },
+  // 底色用 background 而不是 surface：与项目里其它浮层卡片一致（写入确认卡、各处弹层都是
+  // background），浅色档下 surface 是纯白，全项目只有这一处拿它当卡片底。
+  updateCard: { alignSelf: "stretch", backgroundColor: colors.background, borderRadius: 16, padding: 18 },
   updateTitle: { fontSize: 17, fontWeight: "700", color: colors.text },
   updateHint: { marginTop: 8, fontSize: 13, color: colors.textMuted, lineHeight: 19 },
-  updateNotesScroll: { maxHeight: 260, marginTop: 10 },
+  // 高度上限由 AppUpdatePopup 按屏高算（见 notesMaxHeight），这里不写死数值。
+  updateNotesScroll: { marginTop: 10 },
   updateNoteSection: { marginTop: 8, marginBottom: 2, fontSize: 13, fontWeight: "700", color: colors.text },
   updateNoteRow: { flexDirection: "row", gap: 6, marginTop: 4 },
   updateNoteBullet: { color: colors.primary, fontSize: 13, lineHeight: 20 },
@@ -257,7 +261,8 @@ const styles = themedStyles((colors) => StyleSheet.create({
   updateAction: { paddingVertical: 7 },
   updateActionText: { fontSize: 14, fontWeight: "600", color: colors.text },
   updateNowBusy: { opacity: 0.6 },
-  updateNowText: { fontSize: 14, fontWeight: "700", color: colors.accent },
+  // 主操作用主色。accent 是强调/差异用的橙，主操作搬它会让弹窗丢掉本来的配色。
+  updateNowText: { fontSize: 14, fontWeight: "700", color: colors.primary },
   resourceGate: { flex: 1, justifyContent: "center", padding: 28, backgroundColor: colors.background },
   resourceLoading: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, backgroundColor: colors.background },
   resourceTitle: { color: colors.text, fontSize: 28, fontWeight: "800" },
@@ -296,6 +301,14 @@ function AppUpdatePopup() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [countdown, setCountdown] = useState(10);
+  /**
+   * 日志区的高度上限按屏高算，不写死。
+   *
+   * 卡片整体不超过屏高 80%（项目里浮层卡片的既有口径，见 `writeDialogCard` 与公共 BottomSheet
+   * 的 `maxHeight: "80%"`）；扣掉标题、动作区与卡内边距之后，留给日志区的约是屏高的 55%。
+   * 内容短时日志区自然矮，长到上限才在框内滚动 —— 写死数值会把长日志从中间截断。
+   */
+  const notesMaxHeight = Math.round(useWindowDimensions().height * 0.55);
 
   useEffect(() => {
     void (async () => {
@@ -325,7 +338,7 @@ function AppUpdatePopup() {
         <View style={styles.updateCard}>
           <Text style={styles.updateTitle}>发现新版本 {info.latestVersion}</Text>
           {busy ? <Text style={styles.updateHint}>{progress || "正在下载…"}</Text> : null}
-          <AdaptiveScroll maxHeight={260} style={styles.updateNotesScroll}>
+          <AdaptiveScroll maxHeight={notesMaxHeight} style={styles.updateNotesScroll}>
             {parseUpdateNotes(info.notes).map((line, index) =>
               line.kind === "section" ? (
                 <Text key={index} style={styles.updateNoteSection}>{line.text}</Text>

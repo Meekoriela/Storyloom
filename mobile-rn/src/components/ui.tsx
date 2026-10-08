@@ -97,20 +97,32 @@ export function Field({ label, style, adaptive = false, ...props }: TextInputPro
           />
         </View>
       ) : (
-        <TextInput placeholderTextColor={colors.textMuted} {...props} style={[styles.input, style]} />
+        <TextInput
+          placeholderTextColor={colors.textMuted}
+          {...props}
+          // 多行输入一律靠上：安卓原生多行框默认把文字摆在垂直中央，框一被撑高（例如编辑
+          // 信息里的简介框 minHeight 96）文字就停在正中。这一项要放在 {...props} 之后才生效；
+          // 单行字段不加，仍沿用调用方传的值。
+          textAlignVertical={props.multiline ? "top" : props.textAlignVertical}
+          style={[styles.input, style]}
+        />
       )}
     </View>
   );
 }
 
 /**
- * 长文本字段：收起时是只读预览，展开后才变成可编辑的输入框。
+ * 长文本字段，三种状态：收起是只读预览（4 行）→ 展开是只读全文（可滚动、可选中）→
+ * 双击进入编辑。
  *
  * 收起态用只读文本，不用"限高的输入框"：多行输入框在 Android 上遇到预置的长文本会
  * 把内部滚动位置落到光标处（也就是末尾），一打开就停在最后一段、要往上翻。只读文本
  * 没有滚动位置这回事，永远从第一行显示。
  *
- * 两态的高度差走 LayoutAnimation：切换时是过渡，不是一帧跳完。新架构下
+ * 展开态默认只读，是因为这段内容往往比屏幕长：要能顺着滑完，就不该在手指碰到的一刻
+ * 弹出键盘。编辑由双击进入，收起时复位。
+ *
+ * 高度变化走 LayoutAnimation：切换时是过渡，不是一帧跳完。新架构下
  * `UIManager.setLayoutAnimationEnabledExperimental` 已是空操作，不需要那行开关。
  */
 export function ExpandableField({
@@ -133,24 +145,55 @@ export function ExpandableField({
   /** 收起态显示几行预览，默认 4 行。 */
   previewLines?: number;
 }) {
+  // 展开之后先是只读：这段内容通常很长，要能顺着滑动看完，手指碰上不该直接弹键盘。
+  // 双击（两次点击间隔 300ms 内）才进入编辑；收起时复位，下次展开又是只读。
+  const [editing, setEditing] = useState(false);
+  const lastTapRef = useRef(0);
+  useEffect(() => {
+    if (!expanded) setEditing(false);
+  }, [expanded]);
+
   const toggle = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setEditing(false);
     onToggle();
+  };
+  const handleBodyPress = () => {
+    const now = Date.now();
+    if (now - lastTapRef.current <= 300) {
+      lastTapRef.current = 0;
+      setEditing(true);
+      return;
+    }
+    lastTapRef.current = now;
   };
   return (
     <View style={[styles.field, styles.expandableField]}>
       <Text style={styles.label}>{label}</Text>
       {expanded ? (
-        <TextInput
-          multiline
-          maxLength={maxLength}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
-          placeholderTextColor={colors.textMuted}
-          style={[styles.input, styles.expandableOpen]}
-          textAlignVertical="top"
-          value={value}
-        />
+        editing ? (
+          <TextInput
+            multiline
+            maxLength={maxLength}
+            onChangeText={onChangeText}
+            placeholder={placeholder}
+            placeholderTextColor={colors.textMuted}
+            style={[styles.input, styles.expandableOpen]}
+            textAlignVertical="top"
+            value={value}
+          />
+        ) : (
+          // 只读态：与编辑态同一个框，只是不可输入；内容整段可滚，双击才转编辑。
+          <PlainScrollView style={[styles.input, styles.expandableReadonly]} contentContainerStyle={styles.expandableReadonlyContent}>
+            <Pressable accessibilityLabel={`编辑${label}`} onPress={handleBodyPress}>
+              {value.trim() ? (
+                <Text selectable style={styles.expandablePreviewText}>{value}</Text>
+              ) : (
+                <Text style={styles.expandablePreviewEmpty}>{placeholder ?? "双击填写"}</Text>
+              )}
+            </Pressable>
+          </PlainScrollView>
+        )
       ) : (
         /* 收起态是只读预览：整块不可点，展开与收起统一由右侧那颗箭头负责。 */
         <View style={[styles.input, styles.expandablePreview]}>
@@ -841,6 +884,9 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   expandableToggle: { position: "absolute", top: 0, right: 0, width: 32, height: 24, alignItems: "center", justifyContent: "center" },
   expandablePreview: { minHeight: 120 },
   expandableOpen: { minHeight: 120, maxHeight: 320 },
+  // 展开后的只读态：外形与编辑态同一个框，内边距改由滚动内容承担（外层留内边距会把首行顶出可视区）。
+  expandableReadonly: { minHeight: 120, maxHeight: 320, paddingHorizontal: 0, paddingVertical: 0 },
+  expandableReadonlyContent: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
   expandablePreviewText: { color: colors.text, fontSize: 16, lineHeight: 22 },
   expandablePreviewEmpty: { color: colors.textMuted, fontSize: 16 },
   button: {

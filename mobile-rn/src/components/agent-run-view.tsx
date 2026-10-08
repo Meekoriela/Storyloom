@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ActivityIndicator,
+  LayoutAnimation,
   Modal,
   Platform,
   Pressable,
@@ -376,6 +377,16 @@ export function buildTraceLines(input: {
 }
 
 /**
+ * 收起 / 展开的补间。
+ *
+ * 高度突变时下面的内容会整块跳上去，一次跳变比一次短动画更显眼。这里在状态改变之前
+ * 声明下一次布局变化走缓动，收起因此是「滑下去」：填充布局的那一帧会被补间。
+ */
+function animateTraceToggle() {
+  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+}
+
+/**
  * 一轮回复 = 一个合集。
  *
  * 一个折叠、一个箭头，组内所有内容一起展开收起，段落自身不再各带箭头。展开后是
@@ -429,13 +440,17 @@ export function AgentTraceView({
     const changed = previousStatus.current !== trace.status;
     previousStatus.current = trace.status;
     if (trace.status === "running") {
+      animateTraceToggle();
       setExpanded(true);
       return;
     }
     // 用户正往上翻历史时不动：这一下高度变矮会把他看的位置拽走。停在最新这一端时照旧
     // 收 —— 那正是收起来最不打扰人的时刻。
     const atBottom = listAtBottomRef ? listAtBottomRef.current : true;
-    if (changed && trace.status !== "error" && atBottom) setExpanded(false);
+    if (changed && trace.status !== "error" && atBottom) {
+      animateTraceToggle();
+      setExpanded(false);
+    }
   }, [trace.status, listAtBottomRef]);
 
   const eventsById = useMemo(() => new Map(trace.events.map((event) => [event.id, event])), [trace.events]);
@@ -495,7 +510,10 @@ export function AgentTraceView({
         accessibilityRole="button"
         accessibilityState={{ expanded }}
         accessibilityLabel={expanded ? "收起处理过程" : "展开处理过程"}
-        onPress={() => setExpanded((value) => !value)}
+        onPress={() => {
+          animateTraceToggle();
+          setExpanded((value) => !value);
+        }}
         style={styles.traceHeader}
       >
         <View style={styles.nodeSlotLead}>
@@ -507,11 +525,13 @@ export function AgentTraceView({
         {elapsedLabel ? <Text style={styles.traceElapsed}>{elapsedLabel}</Text> : null}
         <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={18} color={colors.textMuted} />
       </Pressable>
-      {expanded && visibleLines.length ? (
+      {visibleLines.length ? (
+        // 收起时保留内容而不是卸载：卸载会把三级调用各自的展开态一起丢掉，重新展开要重建。
+        // 显不显示交给 eventsCollapsed，高度变化由 animateTraceToggle 补间。
         // 思考与正文连着同一条滚动：这里不再留自己的限高滚动区 —— 框一旦滑到头就会把
         // 手势抢走，表现成「滑不动、还回弹」。跑动时要贴最新一行由外层列表天然承担
         // （它本身就是"最新在底"的装法）。
-        <View style={styles.events}>
+        <View style={[styles.events, !expanded && styles.eventsCollapsed]}>
           {trace.collaborationRequired ? (
             <View style={styles.collaborationNotice}>
               <Ionicons name="people-outline" size={16} color={colors.primary} />
@@ -721,6 +741,8 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   traceStatus: { flexShrink: 0, fontSize: 13, fontWeight: "700" },
   traceElapsed: { flexShrink: 0, color: colors.textMuted, fontSize: 12 },
   events: {},
+  // 收起只关显示，不把内容从树里拿走 —— 三级调用各自的展开态因此留着，重新展开不必重建。
+  eventsCollapsed: { display: "none" },
   // 第二级「执行完成」：与「思考过程」同一档缩进与同一个节点标记，差别只在于它下面
   // 挂的是第三级而不是正文。两者都带自己的折叠开关。
   groupHeader: {

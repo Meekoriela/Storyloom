@@ -105,6 +105,56 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+/** 各写入工具里承载"正文"的字段：标题、关键词、ID 不在其列，不做处理。 */
+const WRITE_TEXT_FIELDS: Record<string, string[]> = {
+  write_chapter: ["content"],
+  edit_chapter: ["content"],
+  write_note: ["content"],
+  edit_note: ["content"],
+  create_character: ["description"],
+  edit_character: ["description"],
+  create_world_entry: ["content"],
+  edit_world_entry: ["content"],
+  create_project: ["description"],
+};
+
+/**
+ * 抹掉正文里的排版标记。
+ *
+ * 指令层只能"要求"模型不写 Markdown —— 技能指令自身通篇用标题排版，模型照抄是常态，
+ * 所以入库前再做一次机械规整。只动行首标记与成对加粗，不改文字本身。
+ */
+function stripMarkup(value: string): string {
+  return value
+    .replace(/^[ \t]*#{1,6}[ \t]*/gm, "")
+    .replace(/^[ \t]*>[ \t]?/gm, "")
+    .replace(/^[ \t]*[-*+][ \t]+/gm, "· ")
+    .replace(/^[ \t]*[-*_]{3,}[ \t]*$/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .trim();
+}
+
+/**
+ * 写入前的参数规整：把正文类字段里的排版标记抹平。
+ *
+ * 调用时机必须在**生成改动预览之前** —— 预览、确认卡与真正入库的内容要是同一份，
+ * 否则用户确认的和写进去的会对不上。
+ */
+export function sanitizeWriteArguments(name: string, args: Record<string, unknown>): Record<string, unknown> {
+  const fields = WRITE_TEXT_FIELDS[name];
+  if (!fields) return args;
+  let cleaned: Record<string, unknown> | null = null;
+  for (const field of fields) {
+    const value = args[field];
+    if (typeof value !== "string") continue;
+    const stripped = stripMarkup(value);
+    if (stripped === value) continue;
+    cleaned = { ...(cleaned ?? args) };
+    cleaned[field] = stripped;
+  }
+  return cleaned ?? args;
+}
+
 /**
  * 预览用文本：只做 trim。
  * 🔴 这里曾按 600 字截断，两个后果：①长章节里改动落在 600 字之后时，改动前后一模一样，

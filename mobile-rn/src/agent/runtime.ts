@@ -42,7 +42,7 @@ import type {
 import { listNotes, noteScope } from "@/data/note-repositories";
 
 import { agentTools, executeAgentTool } from "./tools";
-import { buildWritePreview, isWriteTool, rememberUndo, type WritePreview } from "./write-review";
+import { buildWritePreview, isWriteTool, rememberUndo, sanitizeWriteArguments, type WritePreview } from "./write-review";
 
 const MAX_AGENT_ITERATIONS = 12;
 const MAX_DELEGATION_DEPTH = 1;
@@ -736,6 +736,14 @@ async function runAgentLoop(input: LoopInput): Promise<LoopResult> {
     if (turn.reasoning?.trim()) input.recorder.addReasoning(turn.reasoning);
 
     if (turn.toolCalls.length === 0) {
+      // 既没有正文、又没有工具调用 = 这一轮什么都没产出。此前这里回落成一句占位文案，
+      // 整轮仍按成功返回，于是组头写「处理完成」、正文写占位句，两句并排。缺正文即失败：
+      // 抛出去，由本轮的统一出口标错，上层照现有流程写失败消息并给重试。
+      if (!turn.content.trim()) {
+        throw new Error(turn.reasoning?.trim()
+          ? "模型这一轮只输出了思考，没有给出正文。请重试，或在模型设置里调高最大输出 Token 数。"
+          : "模型这一轮没有返回正文，也没有调用工具。请重试，或换用别的模型。");
+      }
       if (consistencyRequired && consistencyEventId) {
         input.recorder.update(consistencyEventId, {
           status: "completed",
@@ -745,7 +753,7 @@ async function runAgentLoop(input: LoopInput): Promise<LoopResult> {
         });
       }
       return {
-        content: turn.content || "模型没有返回内容",
+        content: turn.content,
         ...(turn.reasoning ? { reasoning: turn.reasoning } : {}),
         consistencyRequired,
         characterConsistencyChecked,
@@ -759,6 +767,9 @@ async function runAgentLoop(input: LoopInput): Promise<LoopResult> {
     input.recorder.dropContentPreview();
 
     for (const call of turn.toolCalls) {
+      // 落库前先抹掉正文里的排版标记（模型偶尔仍按 Markdown 写）。放在这里是为了让
+      // 轨迹里的参数、写入确认卡与实际入库的内容三处一致 —— 界面按这一份参数渲染。
+      call.arguments = sanitizeWriteArguments(call.name, call.arguments);
       const kind = call.name === "activate_skill"
         ? "skill"
         : call.name === "delegate_agent"

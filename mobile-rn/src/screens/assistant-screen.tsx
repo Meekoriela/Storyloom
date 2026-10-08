@@ -3,7 +3,7 @@
 import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Image,
   ActivityIndicator,
@@ -15,6 +15,7 @@ import {
   Text,
   TextInput,
   View,
+  type LayoutChangeEvent,
 } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import * as Clipboard from "expo-clipboard";
@@ -39,10 +40,10 @@ import {
 import { editorFontFamily, readChatPrefs } from "@/settings/editor-prefs";
 import { AgentQuestionSheet, AgentTraceView } from "@/components/agent-run-view";
 import { appendBreadcrumb, appendCrashLog } from "@/lib/crash-log";
-import { throttle } from "@/lib/debounce";
+import { throttleFrameGap } from "@/lib/debounce";
 import { MessageActionBar } from "@/components/message-action-bar";
 import { SessionDrawer } from "@/components/session-drawer";
-import { AdaptiveScroll, BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, Header, PromptDialog, ScalePress, Screen, TopSheet } from "@/components/ui";
+import { AdaptiveScroll, BottomSheet, Button, ConfirmDialog, EmptyState, ErrorNotice, Header, PlainScrollView, PromptDialog, ScalePress, Screen, TopSheet } from "@/components/ui";
 import {
   addMessage,
   createChatSession,
@@ -201,23 +202,6 @@ function requestToolApproval(
   });
 }
 
-/**
- * 🔴 临时埋点（量完即删）：点一下之后量两帧。
- *
- * 「首帧」= 点击到第一帧绘制前（同步活与提交走了多久）；「落定」= 再下一帧（渲染与布局
- * 走完）。点作品与点对话各打一行，两个数一比就知道差在哪一段。读取入口是
- * 设置 → 高级 → 导出诊断报告。
- */
-function probeSelect(label: string) {
-  const startedAt = Date.now();
-  requestAnimationFrame(() => {
-    const firstFrame = Date.now();
-    requestAnimationFrame(() => {
-      appendBreadcrumb(`__perf ${label} 首帧${firstFrame - startedAt}ms 落定${Date.now() - startedAt}ms`);
-    });
-  });
-}
-
 function activeSessionSettingKey(projectId: string): string {
   return `assistant.activeSession.${projectId}`;
 }
@@ -229,8 +213,10 @@ function activeAgentSettingKey(projectId: string): string {
 
 /** Plan 只规划不动笔：它出的那条消息下方多一颗「按这个计划开工」。 */
 const PLAN_AGENT_ID = "builtin-agent--plan";
-/** 长按菜单的固定尺寸：宽照参考实测 198；高 = 3 行 × 45 ＋ 卡内上下内边距 8。 */
-const MESSAGE_MENU_WIDTH = 198;
+/** 跑动中的临时行：实时轨迹与流式正文挂在它身上，占列表最新那一端的位置。 */
+const STREAMING_ROW_ID = "__streaming__";
+/** 长按菜单的固定尺寸：宽照参考实测 175；高 = 3 行 × 45 ＋ 卡内上下内边距 8。 */
+const MESSAGE_MENU_WIDTH = 175;
 const MESSAGE_MENU_HEIGHT = 143;
 
 function generatedSessionTitle(content: string): string {
@@ -311,6 +297,101 @@ function retryRequestForMessage(
   };
 }
 
+/** 消息正文的样式入参：字号与行高随「阅读偏好」档位变。 */
+type ChatTextStyle = { fontSize: number; lineHeight: number; fontFamily?: string };
+
+/**
+ * 单条消息的渲染单元。
+ *
+ * 抽成独立组件并做浅比较，是为了让流式刷新只重画正在变的那条：实时轨迹每 40ms 提交一次，
+ * 消息项若仍内联在列表里渲染，每次提交都会把整屏历史重跑一遍 —— 会话越长越明显。
+ * 因此入参里不含 `messages` 数组，重试参数由外部按 id 预算好传进来；三个回调也由外部用
+ * useCallback 固定引用，否则函数身份一变，浅比较就失去意义。
+ */
+const MessageRow = memo(function MessageRow({
+  item,
+  retry,
+  sending,
+  chatTextStyle,
+  onLongPress,
+  onMeasureRow,
+  onRetry,
+  onStartPlan,
+}: {
+  item: ChatMessage;
+  retry: RetryRequest | null;
+  sending: boolean;
+  chatTextStyle: ChatTextStyle;
+  /** offsetY 是按压点在这条消息内的纵向位置：由它反推消息的上边缘，菜单再贴着下边缘落。 */
+  onLongPress: (id: string, pageX: number, pageY: number, offsetY: number) => void;
+  onMeasureRow: (id: string, height: number) => void;
+  onRetry: (retry: RetryRequest) => void;
+  onStartPlan: () => void;
+}) {
+  const failed = item.role === "assistant"
+    && (item.metadata?.taskStatus === "failed" || item.metadata?.agentTrace?.status === "error");
+  const isPlan = item.metadata?.agentTrace?.primaryAgentId === PLAN_AGENT_ID;
+  return (
+    <View>
+      <Pressable
+        // 长按出操作菜单只对用户消息开放；卡片贴在这条消息的下边缘，点空白处收起。
+        onLayout={(event) => onMeasureRow(item.id, event.nativeEvent.layout.height)}
+        onLongPress={item.role === "user"
+          ? (event) => onLongPress(item.id, event.nativeEvent.pageX, event.nativeEvent.pageY, event.nativeEvent.locationY)
+          : undefined}
+        style={[styles.message, item.role === "user" ? styles.userMessage : styles.assistantMessage]}
+      >
+        {item.metadata?.agentTrace ? (
+          <AgentTraceView
+            trace={item.metadata.agentTrace}
+            durationSeconds={item.metadata.processingSeconds}
+            inline
+            reasoningSegments={item.metadata.reasoningSegments
+              ?? (item.metadata.reasoning ? [{ text: item.metadata.reasoning }] : undefined)}
+          />
+        ) : failed ? (
+          <View style={styles.failureCard}>
+            <Text style={styles.failureTitle}>执行失败</Text>
+            {retry ? (
+              <Pressable accessibilityRole="button" disabled={sending} onPress={() => onRetry(retry)} style={[styles.failureRetry, sending && styles.failureRetryDisabled]}>
+                <Ionicons name="refresh-outline" size={17} color={colors.danger} />
+                <Text style={styles.failureRetryText}>{sending ? "处理中" : "重试"}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+        {item.role === "user" && item.metadata?.attachments?.length ? (
+          <View style={styles.attachmentRow}>
+            {item.metadata.attachments.map((entry) => (
+              <View key={entry.name} style={styles.attachmentChip}>
+                <Ionicons name="document-text-outline" size={14} color={colors.primary} />
+                <Text numberOfLines={1} style={styles.attachmentName}>{entry.name}</Text>
+                <Text style={styles.attachmentMeta}>{entry.characters} 字</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        {/* 用户消息不可选中：长按要留给操作菜单，选择文本由菜单打开底部面板承载。 */}
+        <Text selectable={item.role !== "user"} style={[styles.messageText, chatTextStyle]}>{item.content}</Text>
+
+        {item.role === "assistant" && retry ? (
+          <MessageActionBar
+            content={item.content}
+            onRetry={() => onRetry(retry)}
+            retryDisabled={sending}
+            onStartPlan={isPlan ? onStartPlan : undefined}
+          />
+        ) : null}
+      </Pressable>
+      {item.role === "user" ? (
+        <View style={styles.messageEditRowOutside}>
+          <Text style={styles.messageTime}>{formatMessageTime(item.createdAt)}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+});
+
 export function AssistantScreen() {
   // 订阅外观档位：样式表由 themedStyles 的 Proxy 在**读样式键时**才重建，而 StyleSheet.create
   // 的结果会随元素 props 一起固化 —— 屏组件不重渲染，它产出的元素就还带着上一档的 style 引用。
@@ -387,12 +468,13 @@ export function AssistantScreen() {
   const [updatingStyle, setUpdatingStyle] = useState(false);
   const [liveTrace, setLiveTrace] = useState<AgentRunTrace | null>(null);
   /**
-   * 实时轨迹按 150ms 节流刷进 state。
+   * 实时轨迹刷进 state：一帧最多一次，且两次之间不短于 40ms。
    *
-   * 流式思考每到一个 token，runtime 就会发布一次轨迹；不节流就是每 token 整屏
-   * 重渲染。节流后刷新频率与模型吐字速度解耦。
+   * 流式思考每到一个 token，runtime 就发布一次轨迹；不节流就是每 token 整屏重渲染。
+   * 只用毫秒节流时，提交时点与绘制帧不对齐，文字会落在帧中间，看上去一格一格；
+   * 改成落在帧上、间隔又不低于 40ms（约 25 次/秒）之后，文字的增长读起来是连续的。
    */
-  const flushLiveTrace = useMemo(() => throttle((trace: AgentRunTrace) => setLiveTrace(trace), 150), []);
+  const flushLiveTrace = useMemo(() => throttleFrameGap((trace: AgentRunTrace) => setLiveTrace(trace), 40), []);
   /**
    * 🔴 临时埋点（量完即删）：流式期间逐帧记帧间隔，整轮跑完写一行。
    *
@@ -449,6 +531,28 @@ export function AssistantScreen() {
     }
     return parts.join("");
   }, [liveTrace]);
+  /**
+   * 跑动中的临时行。
+   *
+   * 实时轨迹与流式正文原来挂在列表头：列表头与消息项是两个容器，回答结束那一帧要跨容器
+   * 搬一次，位置与高度都跟着变。改成 data 的第一项之后，它占的正是落定消息的位置，结束时
+   * 原地替换 —— 正文不再从一处挪到另一处。
+   */
+  const liveRow: ChatMessage | null = liveTrace || streamingContent
+    ? {
+        id: STREAMING_ROW_ID,
+        projectId: effectiveProjectId ?? "",
+        sessionId: activeSession?.id ?? "",
+        role: "assistant",
+        content: streamingContent,
+        metadata: null,
+        createdAt: "",
+      }
+    : null;
+  const listData = useMemo(
+    () => (liveRow ? [liveRow, ...reversedMessages] : reversedMessages),
+    [liveRow, reversedMessages],
+  );
   // 最近一次被接受的 AI 写入（撤销入口），null 表示当前没有可撤销的改动
   const [undoTarget, setUndoTarget] = useState<string | null>(null);
   // 写入审批方式：过了工具权限那道门之后，是等你点一下，还是直接放行。默认等你点。
@@ -461,14 +565,26 @@ export function AssistantScreen() {
   const [skillOptions, setSkillOptions] = useState<PickedSkill[]>([]);
   const [skillQuery, setSkillQuery] = useState("");
   const [pickedSkill, setPickedSkill] = useState<PickedSkill | null>(null);
-  // 消息长按菜单：记下被按的那条与按压点的屏幕坐标，卡片贴着那一点出现。
-  const [messageMenu, setMessageMenu] = useState<{ id: string; pageX: number; pageY: number } | null>(null);
-  const [selectableMessageId, setSelectableMessageId] = useState<string | null>(null);
+  // 消息长按菜单：记下被按的那条、按压点的横坐标，以及那条消息在屏幕上的上边缘与高度。
+  // 纵向上贴这条消息的下边缘出现（不留间隙），因此要的是行的边界而不是按压点本身。
+  const [messageMenu, setMessageMenu] = useState<{ id: string; pageX: number; rowTop: number; rowHeight: number } | null>(null);
+  // 消息行的高度：长按时用它把「按压点」换算成「这条消息的下边缘」。写进 ref 而不是 state，
+  // 免得每次布局都触发一轮重渲染。
+  const rowHeightsRef = useRef(new Map<string, number>());
+  // 「选择文本」打开的底部面板：面板里显示这条消息的原文，长按即可选中。
+  const [textSelection, setTextSelection] = useState<ChatMessage | null>(null);
   // 消息区的窗口坐标与尺寸：把按压点的屏幕坐标换算成卡片在消息区里的位置。
   const messagesAreaRef = useRef<View>(null);
   const [messagesArea, setMessagesArea] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const measureMessagesArea = useCallback(() => {
     messagesAreaRef.current?.measureInWindow((x, y, width, height) => setMessagesArea({ x, y, width, height }));
+  }, []);
+  // 列表自身的可视范围：菜单纵向要夹在**列表**里，不能按整个消息区算 ——
+  // 消息区还含输入框，按它算，卡片会落到输入框上。
+  const [listLayout, setListLayout] = useState({ y: 0, height: 0 });
+  const measureList = useCallback((event: LayoutChangeEvent) => {
+    const { y, height } = event.nativeEvent.layout;
+    setListLayout({ y, height });
   }, []);
   const [writeCard, setWriteCard] = useState<WriteCardRequest | null>(null);
   const [writeDiffExpanded, setWriteDiffExpanded] = useState(false);
@@ -498,9 +614,6 @@ export function AssistantScreen() {
     const noProject = !activeProjectId;
     setLoading(true);
     setError(null);
-    // 🔴 临时埋点（量完即删）：量「切作品」到底慢在哪一步。Date.now 记的是墙钟，
-    // 三段分别是：进函数 → 并行批完成 → 全部就位。用 breadcrumb 落盘，量完这行也删。
-    const __t0 = Date.now();
     try {
       const [
         nextProject,
@@ -530,7 +643,6 @@ export function AssistantScreen() {
         getActiveStyleProfile(activeProjectId ?? ""),
         getWriteApproval(),
       ]);
-      const __t1 = Date.now();
       if (!noProject && !nextProject) throw new Error("作品不存在");
       // 作品自己有就用作品的，没有就落回设置里的全局默认。
       const activeAgent = agents.find((agent) => agent.id === projectAgentId && agent.enabled && agent.kind === "primary")
@@ -577,8 +689,6 @@ export function AssistantScreen() {
       setActiveStyleProfileState(nextActiveStyleProfile);
       setSelection(nextSelection);
       setError(selectionError);
-      // 🔴 临时埋点（量完即删）：并行批 __t1-__t0，串行的消息与模型解析 __t2-__t1。
-      appendBreadcrumb(`__perf load 并行${__t1 - __t0}ms 全程${Date.now() - __t0}ms 作品=${activeProjectId ? "有" : "无"}`);
     } catch (loadError) {
       if (loadRequestRef.current !== requestId) return;
       setActiveSession(null);
@@ -1053,6 +1163,18 @@ export function AssistantScreen() {
     });
   };
 
+  /**
+   * 撤销入口自己走掉：出现后 15 秒收起。
+   *
+   * 只在真正可见时计时 —— 发送中这条被 `!sending` 隐藏，此时暂停，使条出现之后仍有完整
+   * 的 15 秒。点撤销会立刻把 undoTarget 置空，effect 随之清掉定时器。
+   */
+  useEffect(() => {
+    if (!undoTarget || sending) return;
+    const timer = setTimeout(() => setUndoTarget(null), 15000);
+    return () => clearTimeout(timer);
+  }, [undoTarget, sending]);
+
   /** 撤销最近一次被接受的 AI 写入，把对象还原为改动前的内容。 */
   const handleUndoWrite = () => {
     void (async () => {
@@ -1317,6 +1439,87 @@ export function AssistantScreen() {
     void send(null, "按上面的计划开工。");
   };
 
+  // send 与 startFromPlan 每次渲染都是新函数；这里用 ref 桥接，让行级回调保持稳定引用 ——
+  // 否则消息项的浅比较失效，流式刷新仍旧把整屏历史重跑一遍。
+  const sendRef = useRef(send);
+  const startFromPlanRef = useRef(startFromPlan);
+  useEffect(() => {
+    sendRef.current = send;
+    startFromPlanRef.current = startFromPlan;
+  });
+
+  /**
+   * 重试参数按消息 id 惰性缓存。
+   *
+   * 算它要读整份 messages：放进行内时，每次渲染每行都会重算一遍。缓存之后每条只算一次，
+   * 而且返回的引用稳定 —— 行的浅比较才有意义。
+   */
+  const retryFor = useMemo(() => {
+    const cache = new Map<string, RetryRequest | null>();
+    return (id: string) => {
+      if (!cache.has(id)) {
+        const message = messages.find((item) => item.id === id);
+        cache.set(id, message
+          ? retryRequestForMessage(message, messages, activeSession, selection, activeAgentId)
+          : null);
+      }
+      return cache.get(id) ?? null;
+    };
+  }, [messages, activeSession, selection, activeAgentId]);
+
+  const handleRowMeasure = useCallback((id: string, height: number) => {
+    rowHeightsRef.current.set(id, height);
+  }, []);
+
+  const handleRowLongPress = useCallback((id: string, pageX: number, pageY: number, offsetY: number) => {
+    setMessageMenu({
+      id,
+      pageX,
+      // 按压点减去它在行内的位置 = 这条消息的上边缘（屏幕坐标）。
+      rowTop: pageY - offsetY,
+      rowHeight: rowHeightsRef.current.get(id) ?? 0,
+    });
+  }, []);
+
+  const handleRowRetry = useCallback((retry: RetryRequest) => {
+    void sendRef.current(retry);
+  }, []);
+
+  const handleRowStartPlan = useCallback(() => {
+    startFromPlanRef.current();
+  }, []);
+
+  const messageKey = useCallback((item: ChatMessage) => item.id, []);
+
+  const renderMessageRow = useCallback(({ item }: { item: ChatMessage }) => {
+    // 跑动中的那一行：排版沿用原样（轨迹在上、正文在下），与落定后的消息同顺序。
+    if (item.id === STREAMING_ROW_ID) {
+      return (
+        <View style={styles.liveTimeline}>
+          {/* 跑动中的时长由组头自己写「已处理 Ns」，这里不再另画一行同义的状态条。 */}
+          {liveTrace ? <AgentTraceView trace={liveTrace} defaultExpanded inline liveElapsedSeconds={thinkingSeconds} listAtBottomRef={atBottomRef} /> : null}
+          {streamingContent ? (
+            <View style={styles.streamingBubble}>
+              <Text selectable style={[styles.messageText, chatTextStyle]}>{streamingContent}</Text>
+            </View>
+          ) : null}
+        </View>
+      );
+    }
+    return (
+      <MessageRow
+        item={item}
+        retry={retryFor(item.id)}
+        sending={sending}
+        chatTextStyle={chatTextStyle}
+        onLongPress={handleRowLongPress}
+        onMeasureRow={handleRowMeasure}
+        onRetry={handleRowRetry}
+        onStartPlan={handleRowStartPlan}
+      />
+    );
+  }, [chatTextStyle, handleRowLongPress, handleRowMeasure, handleRowRetry, handleRowStartPlan, liveTrace, retryFor, sending, streamingContent, thinkingSeconds]);
+
   const contextUsage = useMemo(
     () => computeContextUsage(messages, contextWindow, historyLimit),
     [contextWindow, historyLimit, messages],
@@ -1384,27 +1587,23 @@ export function AssistantScreen() {
       <KeyboardAvoidingView ref={messagesAreaRef} onLayout={measureMessagesArea} style={styles.flex} behavior="height" automaticOffset>
         <FlatList
           style={styles.flex}
-          data={reversedMessages}
-          keyExtractor={(item) => item.id}
+          onLayout={measureList}
+          data={listData}
+          keyExtractor={messageKey}
           // 倒置列表：offset 0 恒为最新，打开 / 切换 / 发送天然落在最新。
           // 不要再加 maintainVisibleContentPosition —— 它在每次内容尺寸变化时都会
-          // 调整滚动偏移，而这条列表的内容尺寸变得很频繁（列表头里的实时思考随字
-          // 增长、展开或收起执行轨迹也改高度），偏移被反复改写会把单元排到错误的
+          // 调整滚动偏移，而这条列表的内容尺寸变得很频繁（正在跑的那一行随字数增长、
+          // 展开或收起执行轨迹也改高度），偏移被反复改写会把单元排到错误的
           // 位置上，表现为文字堆在一起或滑到一片空白。
           inverted
           // 只记位置、不写 state：跑完自动收起前要问"用户是不是停在最新这一端"。
           onScroll={(event) => { atBottomRef.current = event.nativeEvent.contentOffset.y <= 8; if (messageMenu) setMessageMenu(null); }}
           scrollEventThrottle={16}
-          contentContainerStyle={messages.length ? styles.messages : styles.emptyMessages}
-          ListHeaderComponent={sending || liveTrace || writeCard ? (
-            <View style={styles.liveTimeline}>
-              {/* 跑动中的时长由组头自己写「已处理 Ns」，这里不再另画一行同义的状态条。 */}
-              {liveTrace ? <AgentTraceView trace={liveTrace} defaultExpanded inline liveElapsedSeconds={thinkingSeconds} listAtBottomRef={atBottomRef} /> : null}
-              {streamingContent ? (
-                <View style={styles.streamingBubble}>
-                  <Text selectable style={[styles.messageText, chatTextStyle]}>{streamingContent}</Text>
-                </View>
-              ) : null}
+          contentContainerStyle={listData.length ? styles.messages : styles.emptyMessages}
+          // 实时轨迹与流式正文已移进 data 的第一项（见 liveRow）：它们占的正是落定消息的位置，
+          // 回答结束时原地替换。列表头只剩写入确认卡 —— 它是覆盖层，不参与列表布局。
+          ListHeaderComponent={(
+            <View>
               {writeCard ? (
                 <Modal visible transparent animationType="fade" onRequestClose={() => { /* 返回键不算决定：只有按按钮才算 */ }}>
                   <View style={styles.writeDialogBackdrop}>
@@ -1432,17 +1631,21 @@ export function AssistantScreen() {
                                 <Text style={styles.writeStatAdd}>+{stats.added} 行</Text>
                                 <Text style={styles.writeStatDel}>−{stats.removed} 行</Text>
                               </View>
+                              {/* 展开态要能读全：不限制每行显示几行，也不截断行数。角色设定、世界书
+                                  条目是一整段没有换行的文本，按换行切只有一行 —— 旧写法给每行压了
+                                  「最多两行」，整段就只显示得到开头两行；笔记同样受益，超过 120 行的
+                                  内容此前会被切掉尾巴。 */}
                               {writeDiffExpanded ? (
                                 <AdaptiveScroll maxHeight={260} style={styles.writeDiffScroll}>
                                   <Text style={styles.writeDiffLabel}>写入前</Text>
                                   {beforeLines.length === 0 ? (
                                     <Text style={styles.writeDiffDel}>− （当前为空）</Text>
-                                  ) : beforeLines.slice(0, 120).map((line, idx) => (
-                                    <Text key={"b" + idx} style={styles.writeDiffDel} numberOfLines={2}>− {line}</Text>
+                                  ) : beforeLines.map((line, idx) => (
+                                    <Text key={"b" + idx} style={styles.writeDiffDel}>− {line}</Text>
                                   ))}
                                   <Text style={[styles.writeDiffLabel, styles.writeDiffLabelSpaced]}>写入后</Text>
-                                  {afterLines.slice(0, 120).map((line, idx) => (
-                                    <Text key={"a" + idx} style={styles.writeDiffAdd} numberOfLines={2}>+ {line}</Text>
+                                  {afterLines.map((line, idx) => (
+                                    <Text key={"a" + idx} style={styles.writeDiffAdd}>+ {line}</Text>
                                   ))}
                                 </AdaptiveScroll>
                               ) : (
@@ -1498,7 +1701,7 @@ export function AssistantScreen() {
                 </Modal>
               ) : null}
             </View>
-          ) : null}
+          )}
           // 加载中不插任何中间态：这一段实测只有几十毫秒，画出来马上又抹掉，本身就是
           // 一次闪。慢到 200ms 以上才给转圈（slowHint）。空态容器的尺寸由 emptyMessages
           // 固定住，不渲染内容也不会产生位移。
@@ -1525,83 +1728,22 @@ export function AssistantScreen() {
               : (
                 <EmptyState title="请先配置供应商并添加模型" action={<Button label="打开模型设置" onPress={() => navigation.navigate("Settings")} />} />
               )}
-          renderItem={({ item }) => (
-            <View>
-            <Pressable
-              // 长按出操作菜单只对用户消息开放；按压点决定卡片落在哪儿，点空白处收起。
-              onLongPress={item.role === "user" ? (event) => {
-                setSelectableMessageId(null);
-                const { pageX, pageY } = event.nativeEvent;
-                setMessageMenu({ id: item.id, pageX, pageY });
-              } : undefined}
-              style={[styles.message, item.role === "user" ? styles.userMessage : styles.assistantMessage]}
-            >
-              {(() => {
-                const messageRetry = retryRequestForMessage(item, messages, activeSession, selection, activeAgentId);
-                const failed = item.role === "assistant" && (item.metadata?.taskStatus === "failed" || item.metadata?.agentTrace?.status === "error");
-                return (
-                  <>
-              {item.metadata?.agentTrace ? (
-                <AgentTraceView
-                  trace={item.metadata.agentTrace}
-                  durationSeconds={item.metadata.processingSeconds}
-                  inline
-                  reasoningSegments={item.metadata.reasoningSegments
-                    ?? (item.metadata.reasoning ? [{ text: item.metadata.reasoning }] : undefined)}
-                />
-              ) : failed ? (
-                <View style={styles.failureCard}>
-                  <Text style={styles.failureTitle}>执行失败</Text>
-                  {messageRetry ? (
-                    <Pressable accessibilityRole="button" disabled={sending} onPress={() => void send(messageRetry)} style={[styles.failureRetry, sending && styles.failureRetryDisabled]}>
-                      <Ionicons name="refresh-outline" size={17} color={colors.danger} />
-                      <Text style={styles.failureRetryText}>{sending ? "处理中" : "重试"}</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              ) : null}
-              {item.role === "user" && item.metadata?.attachments?.length ? (
-                <View style={styles.attachmentRow}>
-                  {item.metadata.attachments.map((entry) => (
-                    <View key={entry.name} style={styles.attachmentChip}>
-                      <Ionicons name="document-text-outline" size={14} color={colors.primary} />
-                      <Text numberOfLines={1} style={styles.attachmentName}>{entry.name}</Text>
-                      <Text style={styles.attachmentMeta}>{entry.characters} 字</Text>
-                    </View>
-                  ))}
-                </View>
-              ) : null}
-              {/* 用户消息平时不可选中：长按要留给操作菜单，选中态由菜单里的「选择文本」进入。 */}
-              <Text selectable={item.role !== "user" || item.id === selectableMessageId} style={[styles.messageText, chatTextStyle]}>{item.content}</Text>
-
-              {item.role === "assistant" && messageRetry ? (
-                <MessageActionBar
-                  content={item.content}
-                  onRetry={() => void send(messageRetry)}
-                  retryDisabled={sending}
-                  onStartPlan={item.metadata?.agentTrace?.primaryAgentId === PLAN_AGENT_ID ? startFromPlan : undefined}
-                />
-              ) : null}
-                  </>
-                );
-              })()}
-            </Pressable>
-            {item.role === "user" ? (
-              <View style={styles.messageEditRowOutside}>
-                <Text style={styles.messageTime}>{formatMessageTime(item.createdAt)}</Text>
-              </View>
-            ) : null}
-            </View>
-          )}
+          renderItem={renderMessageRow}
         />
-        {/* 长按菜单：贴在按压点上，夹在消息区内不越界；点卡片外的任意位置收起。 */}
+        {/* 长按菜单：上边缘贴被按那条消息的下边缘，中间不留间隙；下方放不下时翻到该条上方，
+            底边贴它的上边缘。横向仍按按压点居中并夹在消息区内，点卡片外的任意位置收起。 */}
         {messageMenu ? (() => {
           const target = messages.find((message) => message.id === messageMenu.id) ?? null;
           if (!target) return null;
           const maxLeft = Math.max(spacing.sm, messagesArea.width - MESSAGE_MENU_WIDTH - spacing.sm);
-          const maxTop = Math.max(spacing.sm, messagesArea.height - MESSAGE_MENU_HEIGHT - spacing.sm);
+          const maxTop = Math.max(spacing.sm, listLayout.height - MESSAGE_MENU_HEIGHT - spacing.sm);
           const left = Math.min(Math.max(messageMenu.pageX - messagesArea.x - MESSAGE_MENU_WIDTH / 2, spacing.sm), maxLeft);
-          const top = Math.min(Math.max(messageMenu.pageY - messagesArea.y - MESSAGE_MENU_HEIGHT / 2, spacing.sm), maxTop);
+          const rowTop = messageMenu.rowTop - messagesArea.y - listLayout.y;
+          const rowBottom = rowTop + messageMenu.rowHeight;
+          const topInList = listLayout.height - spacing.sm - rowBottom >= MESSAGE_MENU_HEIGHT
+            ? rowBottom
+            : Math.min(Math.max(rowTop - MESSAGE_MENU_HEIGHT, spacing.sm), maxTop);
+          const top = topInList + listLayout.y;
           return (
             <View style={styles.messageMenuLayer} pointerEvents="box-none">
               <Pressable accessibilityLabel="关闭消息菜单" style={StyleSheet.absoluteFill} onPress={() => setMessageMenu(null)} />
@@ -1610,7 +1752,7 @@ export function AssistantScreen() {
                   <Ionicons name="copy-outline" size={16} color={colors.textMuted} />
                   <Text style={styles.composerMenuText}>复制</Text>
                 </Pressable>
-                <Pressable accessibilityLabel="选择文本" onPress={() => { setSelectableMessageId(target.id); setMessageMenu(null); }} style={({ pressed }) => [styles.messageMenuRow, pressed && styles.composerMenuRowPressed]}>
+                <Pressable accessibilityLabel="选择文本" onPress={() => { setTextSelection(target); setMessageMenu(null); }} style={({ pressed }) => [styles.messageMenuRow, pressed && styles.composerMenuRowPressed]}>
                   <Ionicons name="text-outline" size={16} color={colors.textMuted} />
                   <Text style={styles.composerMenuText}>选择文本</Text>
                 </Pressable>
@@ -1960,6 +2102,16 @@ export function AssistantScreen() {
           </>
         )}
       </BottomSheet>
+      {/* 「选择文本」面板：与项目其它底部弹层同一形态，正文沿用弹层里既有的可选中文本样式。 */}
+      <BottomSheet
+        visible={textSelection !== null}
+        title="选择文本"
+        onClose={() => setTextSelection(null)}
+      >
+        <PlainScrollView style={styles.selectTextScroll} contentContainerStyle={styles.selectTextContent}>
+          <Text selectable style={styles.selectTextBody}>{textSelection?.content ?? ""}</Text>
+        </PlainScrollView>
+      </BottomSheet>
       <BottomSheet
         visible={stylePickerVisible}
         title="选择创作文风"
@@ -2008,14 +2160,10 @@ export function AssistantScreen() {
           // （切作品还要跑一次 load() 的整页重载），两者叠在一起会掉一帧。
           // 选对话那条本来就先收抽屉，这里与之对齐。
           setDrawerVisible(false);
-          // 🔴 临时埋点（量完即删）：量两点，说明见 probeSelect。
-          probeSelect("点作品");
           setCurrentProject(target.id);
         }}
         onSelectSession={(target, session) => {
           setDrawerVisible(false);
-          // 🔴 临时埋点（量完即删）：与「点作品」同一条埋点，用作对照。
-          probeSelect("点对话");
           if (target.id === effectiveProjectId) {
             void switchSession(session);
             return;
@@ -2154,11 +2302,12 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
     paddingVertical: spacing.xs,
     ...shadow.card,
   },
-  // 消息长按菜单：跟随按压点定位（left / top 由按压坐标算出），宽 198、行高 45 照参考实测，其余取现有值。
+  // 消息长按菜单：横向随按压点居中、纵向贴被按消息的下边缘（left / top 由消息行的边界算出），
+  // 宽 175、行高 45 照参考实测，其余取现有值。
   messageMenuLayer: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 20 },
   messageMenu: {
     position: "absolute",
-    width: 198,
+    width: 175,
     backgroundColor: colors.background,
     borderWidth: 1,
     borderColor: colors.border,
@@ -2167,6 +2316,10 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
     ...shadow.card,
   },
   messageMenuRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 45, paddingHorizontal: spacing.md },
+  // 「选择文本」面板的正文：内边距与字号照文风库那个弹层的可选中文本，高度上限由弹层给。
+  selectTextScroll: { flexShrink: 1 },
+  selectTextContent: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
+  selectTextBody: { color: colors.text, fontSize: 14, lineHeight: 21 },
   composerMenuRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 40, paddingHorizontal: spacing.md },
   composerMenuRowPressed: { backgroundColor: colors.surfaceMuted },
   composerMenuRowDisabled: { opacity: 0.55 },
@@ -2174,8 +2327,9 @@ const styles = themedStyles((colors, shadow) => StyleSheet.create({
   composerMenuBack: { flexDirection: "row", alignItems: "center", gap: 2, minHeight: 26, paddingHorizontal: spacing.md },
   composerMenuBackText: { color: colors.textMuted, fontSize: 11 },
   composerMenuHint: { paddingHorizontal: spacing.md, paddingBottom: spacing.xs, color: colors.textMuted, fontSize: 11 },
-  // 技能面板的搜索框：取值与设置页的搜索框一致（minHeight 42 / radius.md / border / 14 号）。
-  skillSearch: { minHeight: 42, marginHorizontal: spacing.md, marginBottom: spacing.xs, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background, color: colors.text, fontSize: 14 },
+  // 技能面板的搜索框：比设置页那一个收一档（34 高 / 13 号），与面板里的技能名同档。
+  // paddingVertical 归零是必须的：输入框自带上下内边距，不显式压住的话高度会多出约 8dp。
+  skillSearch: { minHeight: 34, marginHorizontal: spacing.md, marginBottom: spacing.xs, paddingHorizontal: spacing.md, paddingVertical: 0, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background, color: colors.text, fontSize: 13 },
   skillList: { paddingBottom: spacing.xs },
   approvalOption: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, marginHorizontal: spacing.xs, borderRadius: radius.sm, padding: spacing.sm },
   approvalOptionActive: { backgroundColor: colors.surfaceMuted },

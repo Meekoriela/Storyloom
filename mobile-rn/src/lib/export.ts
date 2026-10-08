@@ -25,8 +25,9 @@ function safeFileName(value: string): string {
   return value.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_").trim().slice(0, 80) || "Storyloom";
 }
 
-function renderChapter(chapter: Chapter): string {
-  return `### ${chapter.title}\n\n${chapter.content.trim() || "（本章暂无正文）"}\n`;
+/** 章节标题的层级按导出范围定：单章是一级，整本里是三级（书名一级、卷二级）。 */
+function renderChapter(chapter: Chapter, headingLevel = 3): string {
+  return `${"#".repeat(headingLevel)} ${chapter.title}\n\n${chapter.content.trim() || "（本章暂无正文）"}\n`;
 }
 
 /** 纯文本渲染：不写任何标记符号，章节标题独立成行，正文原样保留。 */
@@ -45,14 +46,20 @@ export async function exportNovel(input: ExportNovelInput): Promise<void> {
     return;
   }
 
-  const renderBody = isPlainText ? renderChapterText : renderChapter;
+  const isSingleChapter = input.scope === "chapter";
+  const renderBody = isPlainText
+    ? renderChapterText
+    : (chapter: Chapter) => renderChapter(chapter, isSingleChapter ? 1 : 3);
   let title = input.project.title;
+  // 单章导出只交付这一章：书名与简介属于整本，混进单章文件里会被当成章节内容的一部分。
   // 纯文本不写 # 记号：书名与卷名各占一行，其余保持正文原样，方便直接投稿或粘贴。
-  let content = isPlainText ? `${input.project.title}\n\n` : `# ${input.project.title}\n\n`;
+  let content = isSingleChapter
+    ? ""
+    : isPlainText ? `${input.project.title}\n\n` : `# ${input.project.title}\n\n`;
 
-  if (input.project.description.trim()) content += `${input.project.description.trim()}\n\n`;
+  if (!isSingleChapter && input.project.description.trim()) content += `${input.project.description.trim()}\n\n`;
 
-  if (input.scope === "chapter") {
+  if (isSingleChapter) {
     const chapter = orderedChapters.find((item) => item.id === input.chapterId);
     if (!chapter) throw new Error("当前章节不存在，无法导出");
     title = chapter.title;
@@ -73,9 +80,9 @@ export async function exportNovel(input: ExportNovelInput): Promise<void> {
   }
 
   const scopeLabel = input.scope === "chapter" ? "章节" : input.scope === "volume" ? "卷" : "全书";
-  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
   const extension = isPlainText ? "txt" : "md";
-  const file = new File(Paths.cache, `${safeFileName(input.project.title)}-${safeFileName(title)}-${scopeLabel}-${timestamp}.${extension}`);
+  // 文件名不带时间戳：导出的是内容本身，时间由系统分享重名时自己补序号。
+  const file = new File(Paths.cache, `${safeFileName(input.project.title)}-${safeFileName(title)}-${scopeLabel}.${extension}`);
   if (file.exists) file.delete();
   file.write(content);
   if (!(await Sharing.isAvailableAsync())) throw new Error("当前设备不支持系统分享，请稍后重试");
@@ -132,8 +139,7 @@ async function exportNovelEpub(input: ExportNovelInput & { orderedVolumes: Volum
   });
 
   const scopeLabel = input.scope === "chapter" ? "章节" : input.scope === "volume" ? "卷" : "全书";
-  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
-  const file = new File(Paths.cache, `${safeFileName(input.project.title)}-${safeFileName(title)}-${scopeLabel}-${timestamp}.epub`);
+  const file = new File(Paths.cache, `${safeFileName(input.project.title)}-${safeFileName(title)}-${scopeLabel}.epub`);
   if (file.exists) file.delete();
   file.write(bytes);
   if (!(await Sharing.isAvailableAsync())) throw new Error("当前设备不支持系统分享，请稍后重试");
@@ -150,8 +156,9 @@ function dateStamp(): string {  const date = new Date();
   return `${year}-${month}-${day}`;
 }
 
+/** 资料类导出的文件名：作品名 + 类别，不带日期（日期仍写在文件内容里）。 */
 function libraryFileName(projectTitle: string, label: string, format: LibraryExportFormat): string {
-  return `${safeFileName(projectTitle)}_${label}_${dateStamp()}.${format === "json" ? "json" : format === "txt" ? "txt" : "md"}`;
+  return `${safeFileName(projectTitle)}_${label}.${format === "json" ? "json" : format === "txt" ? "txt" : "md"}`;
 }
 
 /**
@@ -210,7 +217,7 @@ export async function exportNotes(input: {
       lines.push(note.content.trim() || "（空）");
       lines.push("");
     }
-    const txtFile = new File(Paths.cache, `${safeFileName(project.title)}_笔记_${dateStamp()}.txt`);
+    const txtFile = new File(Paths.cache, `${safeFileName(project.title)}_笔记.txt`);
     if (txtFile.exists) txtFile.delete();
     txtFile.write(lines.join("\n"));
     if (!(await Sharing.isAvailableAsync())) throw new Error("当前设备不支持系统分享，请稍后重试");
